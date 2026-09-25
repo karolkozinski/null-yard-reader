@@ -1,0 +1,21 @@
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Android Studio / IntelliJ
+.idea/
+.DS_Store
+
+# Generated packages and transfer helpers
+*.apk
+apk.b64
+apk_parts.txt
+
+# Local scratch / backups
+_compose_backup/
