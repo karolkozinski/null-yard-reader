@@ -272,12 +272,12 @@ public class MainActivity extends Activity {
 
         boolean selected = type.equals(currentLibraryType);
         button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-        button.setTextColor(selected ? Color.rgb(242, 237, 226) : Color.rgb(174, 174, 174));
+        button.setTextColor(selected ? Color.rgb(226, 242, 232) : Color.rgb(166, 176, 170));
 
         GradientDrawable background = new GradientDrawable();
         background.setCornerRadius(dp(10));
-        background.setColor(selected ? Color.rgb(74, 70, 62) : Color.rgb(34, 34, 34));
-        background.setStroke(dp(1), selected ? Color.rgb(108, 100, 84) : Color.rgb(54, 54, 54));
+        background.setColor(selected ? Color.rgb(36, 61, 47) : Color.rgb(30, 35, 32));
+        background.setStroke(dp(1), selected ? Color.rgb(66, 104, 80) : Color.rgb(49, 58, 53));
         button.setBackground(background);
 
         button.setOnClickListener(v -> {
@@ -1931,6 +1931,7 @@ public class MainActivity extends Activity {
                 String body = bodyOf(chapter);
                 body = removeScripts(body);
                 body = inlineImages(body, parent(path), entries);
+                body = rewriteElementAnchors(body, path);
                 body = rewriteLinks(body, path);
                 content.append("<section class=\"chapter\" id=\"")
                         .append(chapterAnchor(path))
@@ -2085,28 +2086,50 @@ public class MainActivity extends Activity {
         }
 
         private static String inlineImages(String html, String chapterDir, Map<String, byte[]> entries) {
-            java.util.regex.Pattern tagPattern = java.util.regex.Pattern.compile("(?is)<img\\b[^>]*>");
-            java.util.regex.Pattern srcPattern = java.util.regex.Pattern.compile(
-                    "(?i)(\\bsrc\\s*=\\s*[\"'])([^\"']+)([\"'])"
+            html = inlineImageTags(html, chapterDir, entries, "img", "src");
+            html = inlineImageTags(html, chapterDir, entries, "image", "href");
+            html = inlineImageTags(html, chapterDir, entries, "image", "xlink:href");
+
+            // Embedded objects are not part of the reader surface. Leaving them in WebView
+            // commonly produces Android's generic broken-resource placeholder.
+            html = html.replaceAll("(?is)<object\\b[^>]*>.*?</object>", "");
+            html = html.replaceAll("(?is)<embed\\b[^>]*>", "");
+            return html;
+        }
+
+        private static String inlineImageTags(
+                String html,
+                String chapterDir,
+                Map<String, byte[]> entries,
+                String tagName,
+                String attributeName
+        ) {
+            java.util.regex.Pattern tagPattern = java.util.regex.Pattern.compile(
+                    "(?is)<" + tagName + "\\b[^>]*>"
+            );
+            java.util.regex.Pattern refPattern = java.util.regex.Pattern.compile(
+                    "(?i)(\\b" + java.util.regex.Pattern.quote(attributeName)
+                            + "\\s*=\\s*[\"'])([^\"']+)([\"'])"
             );
             java.util.regex.Matcher tagMatcher = tagPattern.matcher(html);
             StringBuffer out = new StringBuffer();
 
             while (tagMatcher.find()) {
                 String tag = tagMatcher.group();
-                java.util.regex.Matcher srcMatcher = srcPattern.matcher(tag);
-                if (!srcMatcher.find()) {
-                    tagMatcher.appendReplacement(out, "");
-                    continue;
-                }
-
-                String src = srcMatcher.group(2);
-                if (src.startsWith("data:")) {
+                java.util.regex.Matcher refMatcher = refPattern.matcher(tag);
+                if (!refMatcher.find()) {
                     tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(tag));
                     continue;
                 }
 
-                if (src.startsWith("http:") || src.startsWith("https:")) {
+                String src = refMatcher.group(2);
+                String lower = src.toLowerCase();
+                if (lower.startsWith("data:")) {
+                    tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(tag));
+                    continue;
+                }
+
+                if (lower.startsWith("http:") || lower.startsWith("https:")) {
                     tagMatcher.appendReplacement(out, "");
                     continue;
                 }
@@ -2120,8 +2143,8 @@ public class MainActivity extends Activity {
 
                 String mime = imageMime(path);
                 String data = "data:" + mime + ";base64," + Base64.encodeToString(image, Base64.NO_WRAP);
-                String replaced = srcMatcher.replaceFirst(java.util.regex.Matcher.quoteReplacement(
-                        srcMatcher.group(1) + data + srcMatcher.group(3)
+                String replaced = refMatcher.replaceFirst(java.util.regex.Matcher.quoteReplacement(
+                        refMatcher.group(1) + data + refMatcher.group(3)
                 ));
                 tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(replaced));
             }
@@ -2130,42 +2153,61 @@ public class MainActivity extends Activity {
             return out.toString();
         }
 
+        private static String rewriteElementAnchors(String html, String chapterPath) {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                    "(?i)(\\b(?:id|name)\\s*=\\s*[\"'])([^\"']+)([\"'])"
+            );
+            java.util.regex.Matcher matcher = pattern.matcher(html);
+            StringBuffer out = new StringBuffer();
+
+            while (matcher.find()) {
+                String original = matcher.group(2);
+                String rewritten = anchorFor(chapterPath, original);
+                matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
+                        matcher.group(1) + rewritten + matcher.group(3)
+                ));
+            }
+
+            matcher.appendTail(out);
+            return out.toString();
+        }
+
         private static String rewriteLinks(String html, String chapterPath) {
             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                    "(?i)(\\bhref\\s*=\\s*[\"'])([^\"']+)([\"'])"
+                    "(?i)(\\bhref\\s*=\\s*[\"'])([^\"']*)([\"'])"
             );
             java.util.regex.Matcher matcher = pattern.matcher(html);
             StringBuffer out = new StringBuffer();
 
             while (matcher.find()) {
                 String href = matcher.group(2).trim();
-                String rewritten = href;
-
                 String lower = href.toLowerCase();
+
                 if (lower.startsWith("http://") || lower.startsWith("https://")
                         || lower.startsWith("mailto:") || lower.startsWith("tel:")) {
-                    matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
-                            matcher.group(1) + rewritten + matcher.group(3)
-                    ));
-                    continue;
-                }
-
-                if (href.startsWith("#")) {
                     matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
                             matcher.group(1) + href + matcher.group(3)
                     ));
                     continue;
                 }
 
-                int hash = href.indexOf('#');
-                String targetRef = hash >= 0 ? href.substring(0, hash) : href;
-                String fragment = hash >= 0 ? href.substring(hash + 1) : "";
-                String targetPath = resolve(parent(chapterPath), targetRef);
-
-                if (targetPath.equals(chapterPath) && !fragment.isEmpty()) {
-                    rewritten = "#" + fragment;
+                String rewritten;
+                if (href.startsWith("#")) {
+                    String fragment = href.length() > 1 ? href.substring(1) : "";
+                    rewritten = fragment.isEmpty()
+                            ? "#" + chapterAnchor(chapterPath)
+                            : "#" + anchorFor(chapterPath, fragment);
                 } else {
-                    rewritten = "#" + chapterAnchor(targetPath);
+                    int hash = href.indexOf('#');
+                    String targetRef = hash >= 0 ? href.substring(0, hash) : href;
+                    String fragment = hash >= 0 ? href.substring(hash + 1) : "";
+                    String targetPath = targetRef.isEmpty()
+                            ? chapterPath
+                            : resolve(parent(chapterPath), targetRef);
+
+                    rewritten = fragment.isEmpty()
+                            ? "#" + chapterAnchor(targetPath)
+                            : "#" + anchorFor(targetPath, fragment);
                 }
 
                 matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
@@ -2179,6 +2221,15 @@ public class MainActivity extends Activity {
 
         private static String chapterAnchor(String path) {
             return "ny-chapter-" + Integer.toHexString(path.hashCode());
+        }
+
+        private static String anchorFor(String path, String fragment) {
+            String decoded = fragment == null ? "" : fragment;
+            try {
+                decoded = URLDecoder.decode(decoded, "UTF-8");
+            } catch (Exception ignored) {
+            }
+            return chapterAnchor(path) + "-a-" + Integer.toHexString(decoded.hashCode());
         }
 
         private static String imageMime(String path) {
