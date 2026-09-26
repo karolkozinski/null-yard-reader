@@ -14,6 +14,8 @@ import android.graphics.pdf.PdfRenderer;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
@@ -67,6 +69,7 @@ public class MainActivity extends Activity {
     private static final String PREF_FONT_SIZE = "font_size";
     private static final String PREF_LINE_HEIGHT = "line_height";
     private static final String PREF_MARGIN = "reader_margin";
+    private static final String PREF_LIBRARY_TAB = "library_tab";
 
     private final ArrayList<Book> books = new ArrayList<>();
     private SharedPreferences prefs;
@@ -77,9 +80,12 @@ public class MainActivity extends Activity {
     private LinearLayout currentReaderRoot;
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
+    private final Handler previewHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingPreview;
     private int currentPdfPage = 0;
     private PdfRenderer currentPdfRenderer;
     private ParcelFileDescriptor currentPdfDescriptor;
+    private String currentLibraryType = "EPUB";
 
     @Override
     protected void onCreate(Bundle state) {
@@ -100,6 +106,7 @@ public class MainActivity extends Activity {
         }
 
         loadLibrary();
+        currentLibraryType = prefs.getString(PREF_LIBRARY_TAB, "EPUB");
         showLibrary();
     }
 
@@ -137,7 +144,18 @@ public class MainActivity extends Activity {
         title.setText("Null Reader");
         title.setTextColor(Color.WHITE);
         title.setTextSize(32);
-        title.setPadding(0, dp(2), 0, dp(18));
+        title.setPadding(0, dp(2), 0, dp(12));
+
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(0, 0, 0, dp(12));
+
+        tabs.addView(libraryTabButton("EPUB", "EPUB"), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        tabs.addView(libraryTabButton("PDF", "PDF"), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        tabs.addView(libraryTabButton("Tekst", "MD"), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -146,29 +164,30 @@ public class MainActivity extends Activity {
         library.setOrientation(LinearLayout.VERTICAL);
         library.setPadding(0, 0, 0, dp(16));
 
-        if (books.isEmpty()) {
+        List<Book> visibleBooks = booksOfType(currentLibraryType);
+        if (visibleBooks.isEmpty()) {
             TextView empty = new TextView(this);
-            empty.setText("Biblioteka jest pusta");
+            empty.setText(emptyLibraryMessage(currentLibraryType));
             empty.setTextColor(Color.rgb(150, 150, 150));
             empty.setGravity(Gravity.CENTER);
+            empty.setTextSize(15);
             library.addView(empty, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(240)));
         } else {
-            addSection(library, "EPUB", booksOfType("EPUB"));
-            addSection(library, "PDF", booksOfType("PDF"));
-            addSection(library, "MD", booksOfType("MD"));
+            for (Book book : visibleBooks) addBookRow(library, book);
         }
 
         scroll.addView(library, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button add = new Button(this);
-        add.setText("Dodaj książkę");
+        add.setText(addButtonLabel(currentLibraryType));
         add.setAllCaps(false);
-        add.setOnClickListener(v -> openPicker());
+        add.setOnClickListener(v -> openPicker(currentLibraryType));
 
         root.addView(brand);
         root.addView(title);
+        root.addView(tabs);
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(add, new LinearLayout.LayoutParams(
@@ -178,18 +197,36 @@ public class MainActivity extends Activity {
         root.requestApplyInsets();
     }
 
-    private void addSection(LinearLayout parent, String label, List<Book> sectionBooks) {
-        if (sectionBooks.isEmpty()) return;
+    private Button libraryTabButton(String label, String type) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(14);
 
-        TextView header = new TextView(this);
-        header.setText(label + "  " + sectionBooks.size());
-        header.setTextColor(Color.rgb(185, 185, 185));
-        header.setTextSize(13);
-        header.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        header.setPadding(0, dp(14), 0, dp(6));
-        parent.addView(header);
+        boolean selected = type.equals(currentLibraryType);
+        button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setAlpha(selected ? 1.0f : 0.62f);
 
-        for (Book book : sectionBooks) addBookRow(parent, book);
+        button.setOnClickListener(v -> {
+            if (!type.equals(currentLibraryType)) {
+                currentLibraryType = type;
+                prefs.edit().putString(PREF_LIBRARY_TAB, type).apply();
+                showLibrary();
+            }
+        });
+        return button;
+    }
+
+    private String addButtonLabel(String type) {
+        if ("PDF".equals(type)) return "Dodaj PDF";
+        if ("MD".equals(type)) return "Dodaj plik tekstowy";
+        return "Dodaj EPUB";
+    }
+
+    private String emptyLibraryMessage(String type) {
+        if ("PDF".equals(type)) return "Brak plików PDF";
+        if ("MD".equals(type)) return "Brak plików MD/TXT";
+        return "Brak książek EPUB";
     }
 
     private void addBookRow(LinearLayout parent, Book book) {
@@ -253,17 +290,27 @@ public class MainActivity extends Activity {
         return name;
     }
 
-    private void openPicker() {
+    private void openPicker(String type) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
-                "application/epub+zip",
-                "application/pdf",
-                "text/plain",
-                "text/markdown",
-                "application/octet-stream"
-        });
+
+        if ("PDF".equals(type)) {
+            intent.setType("application/pdf");
+        } else if ("MD".equals(type)) {
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                    "text/plain",
+                    "text/markdown",
+                    "application/octet-stream"
+            });
+        } else {
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                    "application/epub+zip",
+                    "application/octet-stream"
+            });
+        }
+
         startActivityForResult(intent, PICK_BOOK);
     }
 
@@ -288,7 +335,10 @@ public class MainActivity extends Activity {
             if (book.uri.equals(uri)) return;
         }
 
-        books.add(new Book(name, uri, mime));
+        Book imported = new Book(name, uri, mime);
+        books.add(imported);
+        currentLibraryType = bookType(imported);
+        prefs.edit().putString(PREF_LIBRARY_TAB, currentLibraryType).apply();
         saveLibrary();
         showLibrary();
     }
@@ -752,32 +802,42 @@ public class MainActivity extends Activity {
     private void previewReadingStyle() {
         if (currentWebView == null || currentRawHtml == null) return;
 
-        final float progress = currentWebView.getScrollProgress();
-        ThemeColors colors = currentThemeColors();
+        if (pendingPreview != null) {
+            previewHandler.removeCallbacks(pendingPreview);
+        }
 
-        if (currentReaderRoot != null) currentReaderRoot.setBackgroundColor(colors.background);
-        if (currentReaderHeader != null) currentReaderHeader.setBackgroundColor(colors.chrome);
-        if (currentReaderTitle != null) currentReaderTitle.setTextColor(colors.foreground);
-        currentWebView.setBackgroundColor(colors.background);
+        pendingPreview = () -> {
+            if (currentWebView == null || currentRawHtml == null) return;
 
-        currentWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                view.postDelayed(() -> {
-                    if (currentWebView != null) {
-                        currentWebView.scrollToProgress(progress);
-                    }
-                }, 120);
-            }
-        });
+            final float progress = currentWebView.getScrollProgress();
+            ThemeColors colors = currentThemeColors();
 
-        currentWebView.loadDataWithBaseURL(
-                "https://local.nullyard.invalid/",
-                applyReadingStyle(currentRawHtml),
-                "text/html",
-                "UTF-8",
-                null
-        );
+            if (currentReaderRoot != null) currentReaderRoot.setBackgroundColor(colors.background);
+            if (currentReaderHeader != null) currentReaderHeader.setBackgroundColor(colors.chrome);
+            if (currentReaderTitle != null) currentReaderTitle.setTextColor(colors.foreground);
+            currentWebView.setBackgroundColor(colors.background);
+
+            currentWebView.setWebViewClient(new WebViewClient() {
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    view.postDelayed(() -> {
+                        if (currentWebView != null) {
+                            currentWebView.scrollToProgress(progress);
+                        }
+                    }, 80);
+                }
+            });
+
+            currentWebView.loadDataWithBaseURL(
+                    "https://local.nullyard.invalid/",
+                    applyReadingStyle(currentRawHtml),
+                    "text/html",
+                    "UTF-8",
+                    null
+            );
+        };
+
+        previewHandler.postDelayed(pendingPreview, 140);
     }
 
     private String applyReadingStyle(String html) {
@@ -985,6 +1045,8 @@ public class MainActivity extends Activity {
         private float zoom = 1.0f;
         private float lastX;
         private float lastY;
+        private boolean scaling = false;
+        private boolean waitForFreshDown = false;
 
         ZoomImageView(android.content.Context context) {
             super(context);
@@ -996,6 +1058,8 @@ public class MainActivity extends Activity {
                     new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                         @Override
                         public boolean onScaleBegin(ScaleGestureDetector detector) {
+                            scaling = true;
+                            waitForFreshDown = true;
                             return true;
                         }
 
@@ -1018,6 +1082,12 @@ public class MainActivity extends Activity {
                             }
                             return true;
                         }
+                        @Override
+                        public void onScaleEnd(ScaleGestureDetector detector) {
+                            scaling = false;
+                            waitForFreshDown = true;
+                        }
+
                     }
             );
         }
@@ -1026,32 +1096,47 @@ public class MainActivity extends Activity {
         public boolean onTouchEvent(MotionEvent event) {
             scaleDetector.onTouchEvent(event);
 
-            if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
-                switch (event.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        lastX = event.getX();
-                        lastY = event.getY();
-                        return true;
+            int action = event.getActionMasked();
 
-                    case MotionEvent.ACTION_MOVE:
-                        if (zoom > 1.0f) {
-                            float dx = event.getX() - lastX;
-                            float dy = event.getY() - lastY;
+            if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP) {
+                waitForFreshDown = true;
+                return true;
+            }
 
+            if (event.getPointerCount() != 1 || scaling || scaleDetector.isInProgress()) {
+                return true;
+            }
+
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    lastX = event.getX();
+                    lastY = event.getY();
+                    waitForFreshDown = false;
+                    return true;
+
+                case MotionEvent.ACTION_MOVE:
+                    if (waitForFreshDown) return true;
+
+                    if (zoom > 1.0f) {
+                        float dx = event.getX() - lastX;
+                        float dy = event.getY() - lastY;
+
+                        if (Math.abs(dx) < 60.0f && Math.abs(dy) < 60.0f) {
                             setTranslationX(getTranslationX() + dx);
                             setTranslationY(getTranslationY() + dy);
                             clampTranslation();
                         }
+                    }
 
-                        lastX = event.getX();
-                        lastY = event.getY();
-                        return true;
+                    lastX = event.getX();
+                    lastY = event.getY();
+                    return true;
 
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        performClick();
-                        return true;
-                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    waitForFreshDown = false;
+                    performClick();
+                    return true;
             }
 
             return true;
