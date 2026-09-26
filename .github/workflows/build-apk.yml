@@ -46,3 +46,5 @@ jobs:
           path: NULL_READER_${{ steps.meta.outputs.stamp }}.apk
           if-no-files-found: error
           retention-days: 7
+
+# build-trigger
