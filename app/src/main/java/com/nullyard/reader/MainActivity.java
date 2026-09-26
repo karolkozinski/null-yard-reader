@@ -81,6 +81,9 @@ public class MainActivity extends Activity {
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
     private TextView currentReaderAuthor;
+    private View currentReaderTopChrome;
+    private View currentReaderBottomChrome;
+    private boolean readerChromeVisible = false;
     private final Handler previewHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingPreview;
     private int previewGeneration = 0;
@@ -171,6 +174,9 @@ public class MainActivity extends Activity {
         currentReaderHeader = null;
         currentReaderTitle = null;
         currentReaderAuthor = null;
+        currentReaderTopChrome = null;
+        currentReaderBottomChrome = null;
+        readerChromeVisible = false;
         previewGeneration++;
         applyDarkSystemBars();
         closePdf();
@@ -464,6 +470,7 @@ public class MainActivity extends Activity {
         readerOpen = true;
         currentBook = book;
         currentWebView = null;
+        readerChromeVisible = false;
 
         int savedPage = prefs.getInt(pdfPageKey(book), 0);
         currentPdfPage = Math.max(0, Math.min(savedPage, currentPdfRenderer.getPageCount() - 1));
@@ -479,12 +486,16 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(18, 18, 18));
 
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            v.setPadding(
-                    0,
-                    insets.getSystemWindowInsetTop(),
-                    0,
-                    insets.getSystemWindowInsetBottom()
-            );
+            if (readerChromeVisible) {
+                v.setPadding(
+                        0,
+                        insets.getSystemWindowInsetTop(),
+                        0,
+                        insets.getSystemWindowInsetBottom()
+                );
+            } else {
+                v.setPadding(0, 0, 0, 0);
+            }
             return insets;
         });
 
@@ -499,11 +510,13 @@ public class MainActivity extends Activity {
         top.setPadding(dp(18), dp(12), dp(18), dp(12));
         top.setBackgroundColor(Color.rgb(24, 24, 24));
         top.setOnClickListener(v -> showLibrary());
+        currentReaderTopChrome = top;
 
         ZoomImageView image = new ZoomImageView(this);
         image.setBackgroundColor(Color.rgb(32, 32, 32));
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setPadding(dp(8), dp(8), dp(8), dp(8));
+        image.setOnClickListener(v -> toggleReaderChrome());
         renderPdfPageInto(image);
 
         LinearLayout controls = new LinearLayout(this);
@@ -511,6 +524,7 @@ public class MainActivity extends Activity {
         controls.setGravity(Gravity.CENTER);
         controls.setPadding(dp(10), dp(8), dp(10), dp(8));
         controls.setBackgroundColor(Color.rgb(24, 24, 24));
+        currentReaderBottomChrome = controls;
 
         Button previous = new Button(this);
         previous.setText("‹");
@@ -552,6 +566,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
+        setReaderChromeVisible(readerChromeVisible);
         root.requestApplyInsets();
     }
 
@@ -619,6 +634,7 @@ public class MainActivity extends Activity {
         readerOpen = true;
         currentBook = book;
         currentRawHtml = html;
+        readerChromeVisible = false;
 
         ThemeColors colors = currentThemeColors();
 
@@ -628,23 +644,27 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(colors.background);
 
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            v.setPadding(
-                    0,
-                    insets.getSystemWindowInsetTop(),
-                    0,
-                    insets.getSystemWindowInsetBottom()
-            );
+            if (readerChromeVisible) {
+                v.setPadding(
+                        0,
+                        insets.getSystemWindowInsetTop(),
+                        0,
+                        insets.getSystemWindowInsetBottom()
+                );
+            } else {
+                v.setPadding(0, 0, 0, 0);
+            }
             return insets;
         });
 
         LinearLayout header = new LinearLayout(this);
         currentReaderHeader = header;
+        currentReaderTopChrome = header;
+        currentReaderBottomChrome = null;
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(8), 0, dp(6), 0);
         header.setBackgroundColor(colors.chrome);
-
-        applyReaderSystemBars(colors);
 
         LinearLayout bookInfo = new LinearLayout(this);
         bookInfo.setOrientation(LinearLayout.VERTICAL);
@@ -703,6 +723,37 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setTextZoom(100);
 
+        final float[] down = new float[2];
+        final boolean[] tapCandidate = new boolean[1];
+        web.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    down[0] = event.getX();
+                    down[1] = event.getY();
+                    tapCandidate[0] = true;
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    tapCandidate[0] = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (Math.abs(event.getX() - down[0]) > dp(12)
+                            || Math.abs(event.getY() - down[1]) > dp(12)) {
+                        tapCandidate[0] = false;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (tapCandidate[0]) {
+                        v.post(this::toggleReaderChrome);
+                    }
+                    tapCandidate[0] = false;
+                    break;
+                case MotionEvent.ACTION_CANCEL:
+                    tapCandidate[0] = false;
+                    break;
+            }
+            return false;
+        });
+
         final int savedY = prefs.getInt(positionKey(book), 0);
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -725,6 +776,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         setContentView(root);
+        setReaderChromeVisible(false);
         root.requestApplyInsets();
     }
 
@@ -993,6 +1045,38 @@ public class MainActivity extends Activity {
         );
     }
 
+    private void toggleReaderChrome() {
+        if (!readerOpen) return;
+        setReaderChromeVisible(!readerChromeVisible);
+    }
+
+    private void setReaderChromeVisible(boolean visible) {
+        readerChromeVisible = visible;
+
+        int visibility = visible ? View.VISIBLE : View.GONE;
+        if (currentReaderTopChrome != null) currentReaderTopChrome.setVisibility(visibility);
+        if (currentReaderBottomChrome != null) currentReaderBottomChrome.setVisibility(visibility);
+
+        if (visible) {
+            applyReaderSystemBars(currentThemeColors());
+        } else {
+            hideReaderSystemBars();
+        }
+
+        if (currentReaderRoot != null) currentReaderRoot.requestApplyInsets();
+    }
+
+    private void hideReaderSystemBars() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        );
+    }
+
     private void applyReaderSystemBars(ThemeColors colors) {
         Window window = getWindow();
         window.setStatusBarColor(colors.chrome);
@@ -1033,6 +1117,14 @@ public class MainActivity extends Activity {
             handleBackNavigation();
         } else {
             super.onBackPressed();
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && readerOpen && !readerChromeVisible) {
+            hideReaderSystemBars();
         }
     }
 
@@ -1172,6 +1264,9 @@ public class MainActivity extends Activity {
         private float zoom = 1.0f;
         private float lastX;
         private float lastY;
+        private float downX;
+        private float downY;
+        private boolean moved = false;
         private boolean scaling = false;
         private boolean waitForFreshDown = false;
 
@@ -1186,6 +1281,7 @@ public class MainActivity extends Activity {
                         @Override
                         public boolean onScaleBegin(ScaleGestureDetector detector) {
                             scaling = true;
+                            moved = true;
                             waitForFreshDown = true;
                             return true;
                         }
@@ -1238,11 +1334,19 @@ public class MainActivity extends Activity {
                 case MotionEvent.ACTION_DOWN:
                     lastX = event.getX();
                     lastY = event.getY();
+                    downX = lastX;
+                    downY = lastY;
+                    moved = false;
                     waitForFreshDown = false;
                     return true;
 
                 case MotionEvent.ACTION_MOVE:
                     if (waitForFreshDown) return true;
+
+                    if (Math.abs(event.getX() - downX) > 18.0f
+                            || Math.abs(event.getY() - downY) > 18.0f) {
+                        moved = true;
+                    }
 
                     if (zoom > 1.0f) {
                         float dx = event.getX() - lastX;
@@ -1260,9 +1364,16 @@ public class MainActivity extends Activity {
                     return true;
 
                 case MotionEvent.ACTION_UP:
+                    if (!waitForFreshDown && !moved && !scaling) {
+                        performClick();
+                    }
+                    waitForFreshDown = false;
+                    moved = false;
+                    return true;
+
                 case MotionEvent.ACTION_CANCEL:
                     waitForFreshDown = false;
-                    performClick();
+                    moved = false;
                     return true;
             }
 
