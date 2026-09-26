@@ -1192,9 +1192,9 @@ public class MainActivity extends Activity {
     private void updateReaderProgress() {
         if (currentWebView == null || currentReaderProgress == null) return;
 
-        int contentHeight = currentWebView.computeVerticalScrollRange();
+        int contentHeight = currentWebView.contentHeightPx();
         int viewportHeight = Math.max(1, getResources().getDisplayMetrics().heightPixels);
-        int maxScroll = Math.max(1, contentHeight - currentWebView.computeVerticalScrollExtent());
+        int maxScroll = Math.max(1, contentHeight - currentWebView.viewportHeightPx());
         int scrollY = Math.max(0, currentWebView.getScrollY());
 
         int totalPages = Math.max(1, (int) Math.ceil(contentHeight / (double) viewportHeight));
@@ -1385,6 +1385,14 @@ public class MainActivity extends Activity {
             }
             int target = Math.round(Math.max(0.0f, Math.min(1.0f, progress)) * range);
             scrollTo(0, target);
+        }
+
+        int contentHeightPx() {
+            return Math.max(1, computeVerticalScrollRange());
+        }
+
+        int viewportHeightPx() {
+            return Math.max(1, computeVerticalScrollExtent());
         }
     }
 
