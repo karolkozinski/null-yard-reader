@@ -7,10 +7,12 @@ import android.content.SharedPreferences;
 import android.content.UriPermission;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Base64;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,7 +23,7 @@ import android.webkit.WebViewClient;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -53,7 +55,6 @@ public class MainActivity extends Activity {
     private static final String PREF_LIBRARY = "library_uris";
 
     private final ArrayList<Book> books = new ArrayList<>();
-    private ArrayAdapter<Book> adapter;
     private SharedPreferences prefs;
     private boolean readerOpen = false;
     private Book currentBook;
@@ -99,44 +100,33 @@ public class MainActivity extends Activity {
         brand.setTextSize(13);
 
         TextView title = new TextView(this);
-        title.setText("Reader");
+        title.setText("Null Reader");
         title.setTextColor(Color.WHITE);
         title.setTextSize(32);
-        title.setPadding(0, dp(2), 0, dp(24));
+        title.setPadding(0, dp(2), 0, dp(18));
 
-        TextView empty = new TextView(this);
-        empty.setText("Biblioteka jest pusta");
-        empty.setTextColor(Color.rgb(150, 150, 150));
-        empty.setGravity(Gravity.CENTER);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
 
-        ListView list = new ListView(this);
-        list.setDividerHeight(dp(1));
-        list.setBackgroundColor(Color.TRANSPARENT);
+        LinearLayout library = new LinearLayout(this);
+        library.setOrientation(LinearLayout.VERTICAL);
+        library.setPadding(0, 0, 0, dp(16));
 
-        adapter = new ArrayAdapter<Book>(this, android.R.layout.simple_list_item_2, android.R.id.text1, books) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                View row = super.getView(position, convertView, parent);
-                TextView line1 = row.findViewById(android.R.id.text1);
-                TextView line2 = row.findViewById(android.R.id.text2);
-                Book book = getItem(position);
+        if (books.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("Biblioteka jest pusta");
+            empty.setTextColor(Color.rgb(150, 150, 150));
+            empty.setGravity(Gravity.CENTER);
+            library.addView(empty, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(240)));
+        } else {
+            addSection(library, "EPUB", booksOfType("EPUB"));
+            addSection(library, "PDF", booksOfType("PDF"));
+            addSection(library, "MD", booksOfType("MD"));
+        }
 
-                line1.setText(book.name);
-                line1.setTextColor(Color.WHITE);
-                line1.setTextSize(17);
-                line2.setText(book.mimeType == null ? "EPUB / dokument" : book.mimeType);
-                line2.setTextColor(Color.rgb(145, 145, 145));
-                return row;
-            }
-        };
-
-        list.setAdapter(adapter);
-        list.setEmptyView(empty);
-        list.setOnItemClickListener((parent, view, position, id) -> openBook(books.get(position)));
-        list.setOnItemLongClickListener((parent, view, position, id) -> {
-            confirmRemoveBook(books.get(position));
-            return true;
-        });
+        scroll.addView(library, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button add = new Button(this);
         add.setText("Dodaj książkę");
@@ -145,15 +135,88 @@ public class MainActivity extends Activity {
 
         root.addView(brand);
         root.addView(title);
-        root.addView(empty, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        root.addView(list, new LinearLayout.LayoutParams(
+        root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(add, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
         root.requestApplyInsets();
+    }
+
+    private void addSection(LinearLayout parent, String label, List<Book> sectionBooks) {
+        if (sectionBooks.isEmpty()) return;
+
+        TextView header = new TextView(this);
+        header.setText(label + "  " + sectionBooks.size());
+        header.setTextColor(Color.rgb(185, 185, 185));
+        header.setTextSize(13);
+        header.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        header.setPadding(0, dp(14), 0, dp(6));
+        parent.addView(header);
+
+        for (Book book : sectionBooks) addBookRow(parent, book);
+    }
+
+    private void addBookRow(LinearLayout parent, Book book) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackgroundColor(Color.rgb(22, 22, 22));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setOnClickListener(v -> openBook(book));
+        row.setOnLongClickListener(v -> {
+            confirmRemoveBook(book);
+            return true;
+        });
+
+        TextView name = new TextView(this);
+        name.setText(displayTitle(book.name));
+        name.setTextColor(Color.WHITE);
+        name.setTextSize(17);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+
+        TextView meta = new TextView(this);
+        meta.setText(bookType(book));
+        meta.setTextColor(Color.rgb(135, 135, 135));
+        meta.setTextSize(13);
+        meta.setPadding(0, dp(3), 0, 0);
+
+        row.addView(name);
+        row.addView(meta);
+        parent.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(48, 48, 48));
+        parent.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    }
+
+    private List<Book> booksOfType(String type) {
+        List<Book> result = new ArrayList<>();
+        for (Book book : books) {
+            if (type.equals(bookType(book))) result.add(book);
+        }
+        return result;
+    }
+
+    private String bookType(Book book) {
+        String name = book.name.toLowerCase();
+        String mime = book.mimeType == null ? "" : book.mimeType.toLowerCase();
+        if (name.endsWith(".epub") || mime.equals("application/epub+zip")) return "EPUB";
+        if (name.endsWith(".pdf") || mime.equals("application/pdf")) return "PDF";
+        return "MD";
+    }
+
+    private String displayTitle(String name) {
+        String lower = name.toLowerCase();
+        for (String suffix : new String[] { ".epub", ".pdf", ".markdown", ".md", ".txt" }) {
+            if (lower.endsWith(suffix)) return name.substring(0, name.length() - suffix.length());
+        }
+        return name;
     }
 
     private void openPicker() {
@@ -193,7 +256,7 @@ public class MainActivity extends Activity {
 
         books.add(new Book(name, uri, mime));
         saveLibrary();
-        adapter.notifyDataSetChanged();
+        showLibrary();
     }
 
     private void confirmRemoveBook(Book book) {
@@ -219,8 +282,8 @@ public class MainActivity extends Activity {
         }
 
         saveLibrary();
-        if (adapter != null) adapter.notifyDataSetChanged();
         Toast.makeText(this, "Usunięto z biblioteki", Toast.LENGTH_SHORT).show();
+        showLibrary();
     }
 
     private void openBook(Book book) {
@@ -261,7 +324,9 @@ public class MainActivity extends Activity {
         });
 
         TextView top = new TextView(this);
-        top.setText("‹  " + book.name);
+        top.setText("‹  " + displayTitle(book.name));
+        top.setSingleLine(true);
+        top.setEllipsize(TextUtils.TruncateAt.END);
         top.setTextColor(Color.WHITE);
         top.setTextSize(16);
         top.setGravity(Gravity.CENTER_VERTICAL);
