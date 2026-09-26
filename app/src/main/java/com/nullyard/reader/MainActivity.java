@@ -1033,7 +1033,7 @@ public class MainActivity extends Activity {
         profiles.addView(compass, new RadioGroup.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        String theme = prefs.getString(PREF_THEME, "dark");
+        String theme = prefs.getString(PREF_THEME, "compass");
         if ("light".equals(theme)) light.setChecked(true);
         else if ("compass".equals(theme)) compass.setChecked(true);
         else dark.setChecked(true);
@@ -1202,9 +1202,9 @@ public class MainActivity extends Activity {
     }
 
     private String applyReadingStyle(String html) {
-        int fontSize = prefs.getInt(PREF_FONT_SIZE, 19);
-        int lineHeight = prefs.getInt(PREF_LINE_HEIGHT, 165);
-        int margin = prefs.getInt(PREF_MARGIN, 22);
+        int fontSize = prefs.getInt(PREF_FONT_SIZE, 17);
+        int lineHeight = prefs.getInt(PREF_LINE_HEIGHT, 160);
+        int margin = prefs.getInt(PREF_MARGIN, 20);
         ThemeColors colors = currentThemeColors();
 
         String css = "<style id=\"null-reader-user-style\">"
@@ -1228,7 +1228,7 @@ public class MainActivity extends Activity {
     }
 
     private ThemeColors currentThemeColors() {
-        String theme = prefs.getString(PREF_THEME, "dark");
+        String theme = prefs.getString(PREF_THEME, "compass");
         if ("light".equals(theme)) {
             return new ThemeColors(
                     Color.rgb(247, 247, 244),
