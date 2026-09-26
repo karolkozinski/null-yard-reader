@@ -31,6 +31,8 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ImageView;
 import android.widget.ScrollView;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
@@ -70,7 +72,11 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private boolean readerOpen = false;
     private Book currentBook;
-    private WebView currentWebView;
+    private ReaderWebView currentWebView;
+    private String currentRawHtml;
+    private LinearLayout currentReaderRoot;
+    private LinearLayout currentReaderHeader;
+    private TextView currentReaderTitle;
     private int currentPdfPage = 0;
     private PdfRenderer currentPdfRenderer;
     private ParcelFileDescriptor currentPdfDescriptor;
@@ -102,6 +108,10 @@ public class MainActivity extends Activity {
         readerOpen = false;
         currentBook = null;
         currentWebView = null;
+        currentRawHtml = null;
+        currentReaderRoot = null;
+        currentReaderHeader = null;
+        currentReaderTitle = null;
         closePdf();
 
         LinearLayout root = new LinearLayout(this);
@@ -372,6 +382,7 @@ public class MainActivity extends Activity {
         });
 
         TextView top = new TextView(this);
+        currentReaderTitle = top;
         top.setText("‹  " + displayTitle(book.name));
         top.setSingleLine(true);
         top.setEllipsize(TextUtils.TruncateAt.END);
@@ -500,10 +511,12 @@ public class MainActivity extends Activity {
     private void showReader(Book book, String html) {
         readerOpen = true;
         currentBook = book;
+        currentRawHtml = html;
 
         ThemeColors colors = currentThemeColors();
 
         LinearLayout root = new LinearLayout(this);
+        currentReaderRoot = root;
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(colors.background);
 
@@ -518,6 +531,7 @@ public class MainActivity extends Activity {
         });
 
         LinearLayout header = new LinearLayout(this);
+        currentReaderHeader = header;
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(8), 0, dp(6), 0);
@@ -546,7 +560,7 @@ public class MainActivity extends Activity {
         header.addView(appearance, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        WebView web = new WebView(this);
+        ReaderWebView web = new ReaderWebView(this);
         currentWebView = web;
         web.setBackgroundColor(colors.background);
 
@@ -594,28 +608,44 @@ public class MainActivity extends Activity {
         profileLabel.setPadding(0, dp(6), 0, dp(4));
         box.addView(profileLabel);
 
-        LinearLayout profiles = new LinearLayout(this);
-        profiles.setOrientation(LinearLayout.HORIZONTAL);
+        RadioGroup profiles = new RadioGroup(this);
+        profiles.setOrientation(RadioGroup.HORIZONTAL);
 
-        Button dark = new Button(this);
+        RadioButton dark = new RadioButton(this);
         dark.setText("Ciemny");
-        dark.setAllCaps(false);
-        dark.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "dark").apply());
+        dark.setId(View.generateViewId());
 
-        Button light = new Button(this);
+        RadioButton light = new RadioButton(this);
         light.setText("Jasny");
-        light.setAllCaps(false);
-        light.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "light").apply());
+        light.setId(View.generateViewId());
 
-        Button compass = new Button(this);
+        RadioButton compass = new RadioButton(this);
         compass.setText("Kompas");
-        compass.setAllCaps(false);
-        compass.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "compass").apply());
+        compass.setId(View.generateViewId());
 
-        profiles.addView(dark, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        profiles.addView(light, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        profiles.addView(compass, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        profiles.addView(dark, new RadioGroup.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        profiles.addView(light, new RadioGroup.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        profiles.addView(compass, new RadioGroup.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        String theme = prefs.getString(PREF_THEME, "dark");
+        if ("light".equals(theme)) light.setChecked(true);
+        else if ("compass".equals(theme)) compass.setChecked(true);
+        else dark.setChecked(true);
+
+        profiles.setOnCheckedChangeListener((group, checkedId) -> {
+            String selected = checkedId == light.getId()
+                    ? "light"
+                    : checkedId == compass.getId() ? "compass" : "dark";
+            prefs.edit().putString(PREF_THEME, selected).apply();
+            previewReadingStyle();
+        });
+
         box.addView(profiles);
+
+        Runnable preview = this::previewReadingStyle;
 
         box.addView(settingRow(
                 "Rozmiar tekstu",
@@ -624,7 +654,8 @@ public class MainActivity extends Activity {
                 14,
                 32,
                 1,
-                ""
+                "",
+                preview
         ));
 
         box.addView(settingRow(
@@ -634,7 +665,8 @@ public class MainActivity extends Activity {
                 120,
                 220,
                 5,
-                "%"
+                "%",
+                preview
         ));
 
         box.addView(settingRow(
@@ -644,17 +676,14 @@ public class MainActivity extends Activity {
                 8,
                 48,
                 2,
-                " dp"
+                " dp",
+                preview
         ));
 
         new AlertDialog.Builder(this)
                 .setTitle("Czytanie")
                 .setView(box)
-                .setNegativeButton("Anuluj", null)
-                .setPositiveButton("Zastosuj", (dialog, which) -> {
-                    saveReadingPosition();
-                    openBook(book);
-                })
+                .setPositiveButton("Gotowe", null)
                 .show();
     }
 
@@ -665,7 +694,8 @@ public class MainActivity extends Activity {
             int min,
             int max,
             int step,
-            String suffix
+            String suffix,
+            Runnable onChange
     ) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -693,14 +723,22 @@ public class MainActivity extends Activity {
 
         minus.setOnClickListener(v -> {
             int current = prefs.getInt(key, defaultValue);
-            prefs.edit().putInt(key, Math.max(min, current - step)).apply();
-            refresh.run();
+            int updated = Math.max(min, current - step);
+            if (updated != current) {
+                prefs.edit().putInt(key, updated).apply();
+                refresh.run();
+                onChange.run();
+            }
         });
 
         plus.setOnClickListener(v -> {
             int current = prefs.getInt(key, defaultValue);
-            prefs.edit().putInt(key, Math.min(max, current + step)).apply();
-            refresh.run();
+            int updated = Math.min(max, current + step);
+            if (updated != current) {
+                prefs.edit().putInt(key, updated).apply();
+                refresh.run();
+                onChange.run();
+            }
         });
 
         row.addView(name, new LinearLayout.LayoutParams(
@@ -709,6 +747,37 @@ public class MainActivity extends Activity {
         row.addView(value, new LinearLayout.LayoutParams(dp(70), ViewGroup.LayoutParams.WRAP_CONTENT));
         row.addView(plus);
         return row;
+    }
+
+    private void previewReadingStyle() {
+        if (currentWebView == null || currentRawHtml == null) return;
+
+        final float progress = currentWebView.getScrollProgress();
+        ThemeColors colors = currentThemeColors();
+
+        if (currentReaderRoot != null) currentReaderRoot.setBackgroundColor(colors.background);
+        if (currentReaderHeader != null) currentReaderHeader.setBackgroundColor(colors.chrome);
+        if (currentReaderTitle != null) currentReaderTitle.setTextColor(colors.foreground);
+        currentWebView.setBackgroundColor(colors.background);
+
+        currentWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                view.postDelayed(() -> {
+                    if (currentWebView != null) {
+                        currentWebView.scrollToProgress(progress);
+                    }
+                }, 120);
+            }
+        });
+
+        currentWebView.loadDataWithBaseURL(
+                "https://local.nullyard.invalid/",
+                applyReadingStyle(currentRawHtml),
+                "text/html",
+                "UTF-8",
+                null
+        );
     }
 
     private String applyReadingStyle(String html) {
@@ -858,6 +927,28 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private static class ReaderWebView extends WebView {
+        ReaderWebView(android.content.Context context) {
+            super(context);
+        }
+
+        float getScrollProgress() {
+            int range = computeVerticalScrollRange() - computeVerticalScrollExtent();
+            if (range <= 0) return 0.0f;
+            return Math.max(0.0f, Math.min(1.0f, getScrollY() / (float) range));
+        }
+
+        void scrollToProgress(float progress) {
+            int range = computeVerticalScrollRange() - computeVerticalScrollExtent();
+            if (range <= 0) {
+                scrollTo(0, 0);
+                return;
+            }
+            int target = Math.round(Math.max(0.0f, Math.min(1.0f, progress)) * range);
+            scrollTo(0, target);
+        }
+    }
+
     private static class ThemeColors {
         final int background;
         final int chrome;
@@ -897,48 +988,101 @@ public class MainActivity extends Activity {
 
         ZoomImageView(android.content.Context context) {
             super(context);
+            setScaleType(ScaleType.FIT_CENTER);
             setClickable(true);
 
             scaleDetector = new ScaleGestureDetector(
                     context,
                     new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                         @Override
+                        public boolean onScaleBegin(ScaleGestureDetector detector) {
+                            return true;
+                        }
+
+                        @Override
                         public boolean onScale(ScaleGestureDetector detector) {
                             zoom *= detector.getScaleFactor();
                             zoom = Math.max(1.0f, Math.min(4.0f, zoom));
+
                             setScaleX(zoom);
                             setScaleY(zoom);
 
-                            if (zoom == 1.0f) {
-                                setTranslationX(0);
-                                setTranslationY(0);
+                            if (zoom <= 1.001f) {
+                                zoom = 1.0f;
+                                setScaleX(1.0f);
+                                setScaleY(1.0f);
+                                setTranslationX(0.0f);
+                                setTranslationY(0.0f);
+                            } else {
+                                clampTranslation();
                             }
                             return true;
                         }
                     }
             );
+        }
 
-            setOnTouchListener((v, event) -> {
-                scaleDetector.onTouchEvent(event);
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            scaleDetector.onTouchEvent(event);
 
-                if (event.getPointerCount() == 1 && zoom > 1.0f && !scaleDetector.isInProgress()) {
-                    switch (event.getActionMasked()) {
-                        case MotionEvent.ACTION_DOWN:
-                            lastX = event.getX();
-                            lastY = event.getY();
-                            return true;
-                        case MotionEvent.ACTION_MOVE:
+            if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        lastX = event.getX();
+                        lastY = event.getY();
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        if (zoom > 1.0f) {
                             float dx = event.getX() - lastX;
                             float dy = event.getY() - lastY;
+
                             setTranslationX(getTranslationX() + dx);
                             setTranslationY(getTranslationY() + dy);
-                            lastX = event.getX();
-                            lastY = event.getY();
-                            return true;
-                    }
+                            clampTranslation();
+                        }
+
+                        lastX = event.getX();
+                        lastY = event.getY();
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        performClick();
+                        return true;
                 }
-                return true;
-            });
+            }
+
+            return true;
+        }
+
+        @Override
+        public boolean performClick() {
+            super.performClick();
+            return true;
+        }
+
+        @Override
+        public void setImageBitmap(Bitmap bm) {
+            super.setImageBitmap(bm);
+            resetZoom();
+        }
+
+        private void resetZoom() {
+            zoom = 1.0f;
+            setScaleX(1.0f);
+            setScaleY(1.0f);
+            setTranslationX(0.0f);
+            setTranslationY(0.0f);
+        }
+
+        private void clampTranslation() {
+            float maxX = Math.max(0.0f, getWidth() * (zoom - 1.0f) / 2.0f);
+            float maxY = Math.max(0.0f, getHeight() * (zoom - 1.0f) / 2.0f);
+
+            setTranslationX(Math.max(-maxX, Math.min(maxX, getTranslationX())));
+            setTranslationY(Math.max(-maxY, Math.min(maxY, getTranslationY())));
         }
     }
 
