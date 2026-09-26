@@ -4,6 +4,10 @@
 
 The project is part of the wider **Null Yard** collection of small, practical tools.
 
+Project website: **https://nullreader.nullyard.com**
+
+Current signed alpha APK: **https://nullreader.nullyard.com/downloads/null-reader-alpha-0.1.apk**
+
 > **Status:** alpha / active development.  
 > The app is already usable, but the interface and file handling are still being refined.
 
