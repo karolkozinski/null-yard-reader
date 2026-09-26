@@ -8,6 +8,10 @@ Project website: **https://nullreader.nullyard.com**
 
 Current signed beta APK: **https://nullreader.nullyard.com/downloads/null-reader-0.2-beta1.apk**
 
+Latest development APK: **https://nullreader.nullyard.com/downloads/null-reader-dev-2026-09-26_1351.apk**
+
+> Development builds use a separate stable CI signing key and cannot be installed over the release-signed beta without uninstalling it first.
+
 > **Status:** beta / active development.  
 > The app is already usable, but the interface and file handling are still being refined.
 
@@ -32,6 +36,7 @@ The library is split into separate **EPUB**, **PDF**, and **Text** views so each
   - Dark
   - Light
   - Compass — a warmer, paper-like theme inspired by the Martwy Kompas project
+- Fresh installs default to Compass, 17 px text, 160% line spacing and 20 dp margins
 - System Back gesture returns from the reader to the library
 - Removing a book from the library never deletes the source file
 
