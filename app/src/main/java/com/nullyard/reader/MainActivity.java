@@ -394,10 +394,22 @@ public class MainActivity extends Activity {
         private static Document parseXml(byte[] data) throws Exception {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setExpandEntityReferences(false);
+
+            safeSetFeature(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+            safeSetFeature(factory, "http://xml.org/sax/features/external-general-entities", false);
+            safeSetFeature(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+            safeSetFeature(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+
             return factory.newDocumentBuilder().parse(new ByteArrayInputStream(data));
+        }
+
+        private static void safeSetFeature(DocumentBuilderFactory factory, String feature, boolean value) {
+            try {
+                factory.setFeature(feature, value);
+            } catch (Exception ignored) {
+                // Android XML parsers differ by API level; unsupported hardening flags are skipped.
+            }
         }
 
         private static String metadataTitle(Document opf, String fallback) {
