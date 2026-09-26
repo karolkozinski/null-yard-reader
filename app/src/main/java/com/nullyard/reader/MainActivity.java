@@ -287,22 +287,23 @@ public class MainActivity extends Activity {
     }
 
     private void openBook(Book book) {
-        if (!looksLikeEpub(book)) {
-            Toast.makeText(this, "Na razie czytamy EPUB. PDF/TXT dojdą później.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        String type = bookType(book);
 
         try {
-            String html = EpubReader.read(this, book.uri, book.name);
-            showReader(book, html);
-        } catch (Exception e) {
-            Toast.makeText(this, "Nie udało się otworzyć EPUB: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
+            if ("EPUB".equals(type)) {
+                showReader(book, EpubReader.read(this, book.uri, book.name));
+                return;
+            }
 
-    private boolean looksLikeEpub(Book book) {
-        if ("application/epub+zip".equals(book.mimeType)) return true;
-        return book.name.toLowerCase().endsWith(".epub");
+            if ("MD".equals(type)) {
+                showReader(book, TextReader.read(this, book.uri, book.name));
+                return;
+            }
+
+            Toast.makeText(this, "PDF będzie następny.", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Nie udało się otworzyć pliku: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showReader(Book book, String html) {
@@ -456,6 +457,147 @@ public class MainActivity extends Activity {
 
         @Override
         public String toString() {
+            return name;
+        }
+    }
+
+    private static class TextReader {
+        static String read(Activity activity, Uri uri, String fallbackTitle) throws Exception {
+            String text;
+            try (InputStream input = activity.getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IllegalArgumentException("brak dostępu do pliku");
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buffer = new byte[16 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
+                text = new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+
+            boolean markdown = fallbackTitle.toLowerCase().endsWith(".md")
+                    || fallbackTitle.toLowerCase().endsWith(".markdown");
+            String body = markdown ? markdownToHtml(text) : plainTextToHtml(text);
+
+            return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                    + "<style>"
+                    + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;}"
+                    + "body{font-family:serif;font-size:19px;line-height:1.65;padding:28px 22px 72px;}"
+                    + "h1,h2,h3,h4,h5,h6{font-family:sans-serif;line-height:1.25;color:#fff;margin:1.5em 0 .7em;}"
+                    + "h1{font-size:1.8em}h2{font-size:1.5em}h3{font-size:1.25em}"
+                    + "p{margin:0 0 1em;}ul,ol{padding-left:1.5em;margin:0 0 1em;}li{margin:.25em 0;}"
+                    + "blockquote{border-left:3px solid #555;padding:.2em 0 .2em 1em;margin:1em 0;color:#ccc;}"
+                    + "code{font-family:monospace;background:#202124;padding:.12em .3em;border-radius:3px;}"
+                    + "pre{font-family:monospace;background:#202124;padding:1em;overflow-x:auto;white-space:pre-wrap;}"
+                    + "a{color:#cfcfcf;}hr{border:0;border-top:1px solid #333;margin:2em 0;}"
+                    + "</style><title>" + escapeHtml(titleWithoutExtension(fallbackTitle))
+                    + "</title></head><body>" + body + "</body></html>";
+        }
+
+        private static String plainTextToHtml(String text) {
+            String escaped = escapeHtml(text).replace("\r\n", "\n").replace("\r", "\n");
+            String[] blocks = escaped.split("\n\\s*\n");
+            StringBuilder html = new StringBuilder();
+            for (String block : blocks) {
+                if (block.trim().isEmpty()) continue;
+                html.append("<p>").append(block.trim().replace("\n", "<br>")).append("</p>");
+            }
+            return html.toString();
+        }
+
+        private static String markdownToHtml(String text) {
+            String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
+            String[] lines = normalized.split("\n", -1);
+            StringBuilder html = new StringBuilder();
+            StringBuilder paragraph = new StringBuilder();
+            boolean inCode = false;
+            boolean inList = false;
+
+            for (String raw : lines) {
+                String trimmed = raw.trim();
+
+                if (trimmed.startsWith("```")) {
+                    flushParagraph(html, paragraph);
+                    if (inList) { html.append("</ul>"); inList = false; }
+                    if (!inCode) { html.append("<pre><code>"); inCode = true; }
+                    else { html.append("</code></pre>"); inCode = false; }
+                    continue;
+                }
+
+                if (inCode) {
+                    html.append(escapeHtml(raw)).append("\n");
+                    continue;
+                }
+
+                if (trimmed.isEmpty()) {
+                    flushParagraph(html, paragraph);
+                    if (inList) { html.append("</ul>"); inList = false; }
+                    continue;
+                }
+
+                if (trimmed.matches("^#{1,6}\\s+.*")) {
+                    flushParagraph(html, paragraph);
+                    if (inList) { html.append("</ul>"); inList = false; }
+                    int level = 0;
+                    while (level < trimmed.length() && trimmed.charAt(level) == '#') level++;
+                    html.append("<h").append(level).append(">")
+                            .append(inlineMarkdown(trimmed.substring(level).trim()))
+                            .append("</h").append(level).append(">");
+                    continue;
+                }
+
+                if (trimmed.matches("^[-*+]\\s+.*")) {
+                    flushParagraph(html, paragraph);
+                    if (!inList) { html.append("<ul>"); inList = true; }
+                    html.append("<li>")
+                            .append(inlineMarkdown(trimmed.replaceFirst("^[-*+]\\s+", "")))
+                            .append("</li>");
+                    continue;
+                }
+
+                if (trimmed.startsWith(">")) {
+                    flushParagraph(html, paragraph);
+                    html.append("<blockquote>")
+                            .append(inlineMarkdown(trimmed.substring(1).trim()))
+                            .append("</blockquote>");
+                    continue;
+                }
+
+                if (paragraph.length() > 0) paragraph.append(' ');
+                paragraph.append(trimmed);
+            }
+
+            flushParagraph(html, paragraph);
+            if (inList) html.append("</ul>");
+            if (inCode) html.append("</code></pre>");
+            return html.toString();
+        }
+
+        private static void flushParagraph(StringBuilder html, StringBuilder paragraph) {
+            if (paragraph.length() == 0) return;
+            html.append("<p>").append(inlineMarkdown(paragraph.toString())).append("</p>");
+            paragraph.setLength(0);
+        }
+
+        private static String inlineMarkdown(String text) {
+            String value = escapeHtml(text);
+            value = value.replaceAll("`([^`]+)`", "<code>$1</code>");
+            value = value.replaceAll("\\*\\*([^*]+)\\*\\*", "<strong>$1</strong>");
+            value = value.replaceAll("__([^_]+)__", "<strong>$1</strong>");
+            value = value.replaceAll("(?<!\\*)\\*([^*]+)\\*(?!\\*)", "<em>$1</em>");
+            return value;
+        }
+
+        private static String escapeHtml(String text) {
+            return text.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\"", "&quot;");
+        }
+
+        private static String titleWithoutExtension(String name) {
+            String lower = name.toLowerCase();
+            for (String suffix : new String[] { ".markdown", ".epub", ".pdf", ".md", ".txt" }) {
+                if (lower.endsWith(suffix)) return name.substring(0, name.length() - suffix.length());
+            }
             return name;
         }
     }
