@@ -8,6 +8,8 @@ val releaseSigningProperties = Properties().apply {
     }
 }
 
+val ciSigningFile = rootProject.file("ci/nullreader-ci.keystore")
+
 plugins {
     alias(libs.plugins.android.application)
 }
@@ -25,6 +27,15 @@ android {
     }
 
     signingConfigs {
+        create("ci") {
+            if (ciSigningFile.exists()) {
+                storeFile = ciSigningFile
+                storePassword = "nullreader-ci"
+                keyAlias = "nullreader-ci"
+                keyPassword = "nullreader-ci"
+            }
+        }
+
         create("release") {
             if (releaseSigningPropertiesFile.exists()) {
                 storeFile = file(releaseSigningProperties.getProperty("storeFile"))
@@ -39,6 +50,9 @@ android {
         debug {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            if (ciSigningFile.exists()) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
         }
         release {
             isMinifyEnabled = true
