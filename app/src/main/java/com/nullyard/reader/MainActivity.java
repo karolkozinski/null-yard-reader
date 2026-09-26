@@ -12,6 +12,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.drawable.GradientDrawable;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.graphics.pdf.PdfRenderer;
@@ -29,6 +30,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -216,12 +218,9 @@ public class MainActivity extends Activity {
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         tabs.setPadding(0, 0, 0, dp(12));
 
-        tabs.addView(libraryTabButton("EPUB", "EPUB"), new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        tabs.addView(libraryTabButton("PDF", "PDF"), new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        tabs.addView(libraryTabButton("Tekst", "MD"), new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        tabs.addView(libraryTabButton("EPUB", "EPUB"), libraryTabLayoutParams());
+        tabs.addView(libraryTabButton("PDF", "PDF"), libraryTabLayoutParams());
+        tabs.addView(libraryTabButton("Tekst", "MD"), libraryTabLayoutParams());
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -268,10 +267,18 @@ public class MainActivity extends Activity {
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(14);
+        button.setMinHeight(dp(46));
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
 
         boolean selected = type.equals(currentLibraryType);
         button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-        button.setAlpha(selected ? 1.0f : 0.62f);
+        button.setTextColor(selected ? Color.rgb(242, 237, 226) : Color.rgb(174, 174, 174));
+
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(10));
+        background.setColor(selected ? Color.rgb(74, 70, 62) : Color.rgb(34, 34, 34));
+        background.setStroke(dp(1), selected ? Color.rgb(108, 100, 84) : Color.rgb(54, 54, 54));
+        button.setBackground(background);
 
         button.setOnClickListener(v -> {
             if (!type.equals(currentLibraryType)) {
@@ -281,6 +288,13 @@ public class MainActivity extends Activity {
             }
         });
         return button;
+    }
+
+    private LinearLayout.LayoutParams libraryTabLayoutParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        params.setMargins(dp(3), 0, dp(3), 0);
+        return params;
     }
 
     private String addButtonLabel(String type) {
@@ -339,6 +353,17 @@ public class MainActivity extends Activity {
 
         info.addView(name);
         info.addView(meta);
+
+        String progressText = libraryProgressText(book);
+        if (progressText != null) {
+            TextView progress = new TextView(this);
+            progress.setText(progressText);
+            progress.setTextColor(Color.rgb(118, 112, 101));
+            progress.setTextSize(12);
+            progress.setPadding(0, dp(6), 0, 0);
+            info.addView(progress);
+        }
+
         row.addView(info, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
@@ -349,6 +374,13 @@ public class MainActivity extends Activity {
         divider.setBackgroundColor(Color.rgb(48, 48, 48));
         parent.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    }
+
+    private String libraryProgressText(Book book) {
+        int percent = prefs.getInt(progressKey(book), -1);
+        if (percent < 0) return null;
+        percent = Math.max(0, Math.min(100, percent));
+        return "Postęp  " + percent + "%";
     }
 
     private Bitmap bookCoverBitmap(Book book) {
@@ -543,7 +575,12 @@ public class MainActivity extends Activity {
 
     private void removeBook(Book book) {
         books.remove(book);
-        prefs.edit().remove(positionKey(book)).remove(pdfPageKey(book)).apply();
+        prefs.edit()
+                .remove(positionKey(book))
+                .remove(progressKey(book))
+                .remove(pdfPageKey(book))
+                .remove(pdfCountKey(book))
+                .apply();
 
         try {
             getContentResolver().releasePersistableUriPermission(
@@ -592,6 +629,7 @@ public class MainActivity extends Activity {
         if (currentPdfRenderer.getPageCount() == 0) {
             throw new IllegalArgumentException("PDF nie zawiera stron");
         }
+        prefs.edit().putInt(pdfCountKey(book), currentPdfRenderer.getPageCount()).apply();
 
         readerOpen = true;
         currentBook = book;
@@ -729,11 +767,21 @@ public class MainActivity extends Activity {
 
     private void savePdfPage() {
         if (currentBook == null || currentPdfRenderer == null) return;
-        prefs.edit().putInt(pdfPageKey(currentBook), currentPdfPage).apply();
+        int count = Math.max(1, currentPdfRenderer.getPageCount());
+        int percent = Math.round(((currentPdfPage + 1) * 100.0f) / count);
+        prefs.edit()
+                .putInt(pdfPageKey(currentBook), currentPdfPage)
+                .putInt(pdfCountKey(currentBook), count)
+                .putInt(progressKey(currentBook), Math.max(0, Math.min(100, percent)))
+                .apply();
     }
 
     private String pdfPageKey(Book book) {
         return "pdf-page:" + book.uri.toString();
+    }
+
+    private String pdfCountKey(Book book) {
+        return "pdf-count:" + book.uri.toString();
     }
 
     private void closePdf() {
@@ -901,6 +949,17 @@ public class MainActivity extends Activity {
                     if (savedY > 0) view.scrollTo(0, savedY);
                     updateReaderProgress();
                 });
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleReaderLink(view, request.getUrl());
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleReaderLink(view, Uri.parse(url));
             }
         });
 
@@ -1202,6 +1261,36 @@ public class MainActivity extends Activity {
         int percent = Math.min(100, Math.max(0, Math.round(scrollY * 100.0f / maxScroll)));
 
         currentReaderProgress.setText(currentPage + " / " + totalPages + " · " + percent + "%");
+        if (currentBook != null) {
+            prefs.edit().putInt(progressKey(currentBook), percent).apply();
+        }
+    }
+
+    private boolean handleReaderLink(WebView view, Uri uri) {
+        if (uri == null) return true;
+
+        String scheme = uri.getScheme();
+        String host = uri.getHost();
+
+        if ("https".equalsIgnoreCase(scheme) && "local.nullyard.invalid".equalsIgnoreCase(host)) {
+            String path = uri.getPath();
+            String fragment = uri.getFragment();
+            if ((path == null || "/".equals(path)) && fragment != null && !fragment.isEmpty()) {
+                return false;
+            }
+            return true;
+        }
+
+        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, uri));
+            } catch (Exception e) {
+                Toast.makeText(this, "Nie udało się otworzyć linku", Toast.LENGTH_SHORT).show();
+            }
+            return true;
+        }
+
+        return true;
     }
 
     private void toggleReaderChrome() {
@@ -1338,11 +1427,19 @@ public class MainActivity extends Activity {
 
     private void saveReadingPosition() {
         if (!readerOpen || currentBook == null || currentWebView == null) return;
-        prefs.edit().putInt(positionKey(currentBook), currentWebView.getScrollY()).apply();
+        int percent = Math.round(currentWebView.getScrollProgress() * 100.0f);
+        prefs.edit()
+                .putInt(positionKey(currentBook), currentWebView.getScrollY())
+                .putInt(progressKey(currentBook), Math.max(0, Math.min(100, percent)))
+                .apply();
     }
 
     private String positionKey(Book book) {
         return "position:" + book.uri.toString();
+    }
+
+    private String progressKey(Book book) {
+        return "progress:" + book.uri.toString();
     }
 
     private String displayName(Uri uri) {
@@ -1834,7 +1931,10 @@ public class MainActivity extends Activity {
                 String body = bodyOf(chapter);
                 body = removeScripts(body);
                 body = inlineImages(body, parent(path), entries);
-                content.append("<section class=\"chapter\">")
+                body = rewriteLinks(body, path);
+                content.append("<section class=\"chapter\" id=\"")
+                        .append(chapterAnchor(path))
+                        .append("\">")
                         .append(body)
                         .append("</section>");
             }
@@ -1985,30 +2085,100 @@ public class MainActivity extends Activity {
         }
 
         private static String inlineImages(String html, String chapterDir, Map<String, byte[]> entries) {
-            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                    "(?i)(<img\\b[^>]*?\\bsrc\\s*=\\s*[\"'])([^\"']+)([\"'])"
+            java.util.regex.Pattern tagPattern = java.util.regex.Pattern.compile("(?is)<img\\b[^>]*>");
+            java.util.regex.Pattern srcPattern = java.util.regex.Pattern.compile(
+                    "(?i)(\\bsrc\\s*=\\s*[\"'])([^\"']+)([\"'])"
             );
-            java.util.regex.Matcher matcher = pattern.matcher(html);
+            java.util.regex.Matcher tagMatcher = tagPattern.matcher(html);
             StringBuffer out = new StringBuffer();
 
-            while (matcher.find()) {
-                String src = matcher.group(2);
-                if (src.startsWith("data:") || src.startsWith("http:") || src.startsWith("https:")) {
+            while (tagMatcher.find()) {
+                String tag = tagMatcher.group();
+                java.util.regex.Matcher srcMatcher = srcPattern.matcher(tag);
+                if (!srcMatcher.find()) {
+                    tagMatcher.appendReplacement(out, "");
+                    continue;
+                }
+
+                String src = srcMatcher.group(2);
+                if (src.startsWith("data:")) {
+                    tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(tag));
+                    continue;
+                }
+
+                if (src.startsWith("http:") || src.startsWith("https:")) {
+                    tagMatcher.appendReplacement(out, "");
                     continue;
                 }
 
                 String path = resolve(chapterDir, src);
                 byte[] image = entries.get(path);
-                if (image == null) continue;
+                if (image == null) {
+                    tagMatcher.appendReplacement(out, "");
+                    continue;
+                }
 
                 String mime = imageMime(path);
                 String data = "data:" + mime + ";base64," + Base64.encodeToString(image, Base64.NO_WRAP);
+                String replaced = srcMatcher.replaceFirst(java.util.regex.Matcher.quoteReplacement(
+                        srcMatcher.group(1) + data + srcMatcher.group(3)
+                ));
+                tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(replaced));
+            }
+
+            tagMatcher.appendTail(out);
+            return out.toString();
+        }
+
+        private static String rewriteLinks(String html, String chapterPath) {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                    "(?i)(\\bhref\\s*=\\s*[\"'])([^\"']+)([\"'])"
+            );
+            java.util.regex.Matcher matcher = pattern.matcher(html);
+            StringBuffer out = new StringBuffer();
+
+            while (matcher.find()) {
+                String href = matcher.group(2).trim();
+                String rewritten = href;
+
+                String lower = href.toLowerCase();
+                if (lower.startsWith("http://") || lower.startsWith("https://")
+                        || lower.startsWith("mailto:") || lower.startsWith("tel:")) {
+                    matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
+                            matcher.group(1) + rewritten + matcher.group(3)
+                    ));
+                    continue;
+                }
+
+                if (href.startsWith("#")) {
+                    matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
+                            matcher.group(1) + href + matcher.group(3)
+                    ));
+                    continue;
+                }
+
+                int hash = href.indexOf('#');
+                String targetRef = hash >= 0 ? href.substring(0, hash) : href;
+                String fragment = hash >= 0 ? href.substring(hash + 1) : "";
+                String targetPath = resolve(parent(chapterPath), targetRef);
+
+                if (targetPath.equals(chapterPath) && !fragment.isEmpty()) {
+                    rewritten = "#" + fragment;
+                } else {
+                    rewritten = "#" + chapterAnchor(targetPath);
+                }
+
                 matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
-                        matcher.group(1) + data + matcher.group(3)
+                        matcher.group(1) + rewritten + matcher.group(3)
                 ));
             }
+
             matcher.appendTail(out);
             return out.toString();
+        }
+
+        private static String chapterAnchor(String path) {
+            return "ny-chapter-" + Integer.toHexString(path.hashCode());
         }
 
         private static String imageMime(String path) {
