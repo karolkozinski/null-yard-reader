@@ -880,6 +880,14 @@ public class MainActivity extends Activity {
         progress.setPadding(dp(3), 0, dp(8), 0);
         progress.setGravity(Gravity.CENTER_VERTICAL);
 
+        Button restart = new Button(this);
+        restart.setText("↑");
+        restart.setContentDescription("Do początku");
+        restart.setAllCaps(false);
+        restart.setMinWidth(0);
+        restart.setMinimumWidth(0);
+        restart.setPadding(dp(12), 0, dp(12), 0);
+
         Button appearance = new Button(this);
         appearance.setText("Aa");
         appearance.setAllCaps(false);
@@ -892,6 +900,8 @@ public class MainActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         header.addView(progress, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        header.addView(restart, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         header.addView(appearance, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -940,6 +950,15 @@ public class MainActivity extends Activity {
 
         web.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) ->
                 updateReaderProgress());
+
+        restart.setOnClickListener(v -> {
+            web.scrollTo(0, 0);
+            prefs.edit()
+                    .putInt(positionKey(book), 0)
+                    .putInt(progressKey(book), 0)
+                    .apply();
+            updateReaderProgress();
+        });
 
         final int savedY = prefs.getInt(positionKey(book), 0);
         web.setWebViewClient(new WebViewClient() {
