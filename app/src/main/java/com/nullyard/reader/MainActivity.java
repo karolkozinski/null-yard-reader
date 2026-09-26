@@ -8,6 +8,8 @@ import android.content.UriPermission;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Bitmap;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.graphics.pdf.PdfRenderer;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -59,6 +61,10 @@ public class MainActivity extends Activity {
     private static final int PICK_BOOK = 1001;
     private static final String PREFS = "reader_state";
     private static final String PREF_LIBRARY = "library_uris";
+    private static final String PREF_THEME = "reading_theme";
+    private static final String PREF_FONT_SIZE = "font_size";
+    private static final String PREF_LINE_HEIGHT = "line_height";
+    private static final String PREF_MARGIN = "reader_margin";
 
     private final ArrayList<Book> books = new ArrayList<>();
     private SharedPreferences prefs;
@@ -376,20 +382,11 @@ public class MainActivity extends Activity {
         top.setBackgroundColor(Color.rgb(24, 24, 24));
         top.setOnClickListener(v -> showLibrary());
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(32, 32, 32));
-
-        ImageView image = new ImageView(this);
-        image.setAdjustViewBounds(true);
+        ZoomImageView image = new ZoomImageView(this);
+        image.setBackgroundColor(Color.rgb(32, 32, 32));
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setPadding(dp(8), dp(8), dp(8), dp(8));
-
         renderPdfPageInto(image);
-        scroll.addView(image, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -431,7 +428,7 @@ public class MainActivity extends Activity {
 
         root.addView(top, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(scroll, new LinearLayout.LayoutParams(
+        root.addView(image, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(controls, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -504,9 +501,11 @@ public class MainActivity extends Activity {
         readerOpen = true;
         currentBook = book;
 
+        ThemeColors colors = currentThemeColors();
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(18, 18, 18));
+        root.setBackgroundColor(colors.background);
 
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             v.setPadding(
@@ -518,20 +517,38 @@ public class MainActivity extends Activity {
             return insets;
         });
 
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), 0, dp(6), 0);
+        header.setBackgroundColor(colors.chrome);
+
         TextView top = new TextView(this);
         top.setText("‹  " + displayTitle(book.name));
         top.setSingleLine(true);
         top.setEllipsize(TextUtils.TruncateAt.END);
-        top.setTextColor(Color.WHITE);
+        top.setTextColor(colors.foreground);
         top.setTextSize(16);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(18), dp(12), dp(18), dp(12));
-        top.setBackgroundColor(Color.rgb(24, 24, 24));
+        top.setPadding(dp(10), dp(12), dp(8), dp(12));
         top.setOnClickListener(v -> showLibrary());
+
+        Button appearance = new Button(this);
+        appearance.setText("Aa");
+        appearance.setAllCaps(false);
+        appearance.setMinWidth(0);
+        appearance.setMinimumWidth(0);
+        appearance.setPadding(dp(12), 0, dp(12), 0);
+        appearance.setOnClickListener(v -> showReadingSettings(book));
+
+        header.addView(top, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        header.addView(appearance, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         WebView web = new WebView(this);
         currentWebView = web;
-        web.setBackgroundColor(Color.rgb(18, 18, 18));
+        web.setBackgroundColor(colors.background);
 
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(false);
@@ -551,19 +568,213 @@ public class MainActivity extends Activity {
 
         web.loadDataWithBaseURL(
                 "https://local.nullyard.invalid/",
-                html,
+                applyReadingStyle(html),
                 "text/html",
                 "UTF-8",
                 null
         );
 
-        root.addView(top, new LinearLayout.LayoutParams(
+        root.addView(header, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(web, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         setContentView(root);
         root.requestApplyInsets();
+    }
+
+    private void showReadingSettings(Book book) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), dp(4));
+
+        TextView profileLabel = new TextView(this);
+        profileLabel.setText("Profil");
+        profileLabel.setTextSize(14);
+        profileLabel.setPadding(0, dp(6), 0, dp(4));
+        box.addView(profileLabel);
+
+        LinearLayout profiles = new LinearLayout(this);
+        profiles.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button dark = new Button(this);
+        dark.setText("Ciemny");
+        dark.setAllCaps(false);
+        dark.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "dark").apply());
+
+        Button light = new Button(this);
+        light.setText("Jasny");
+        light.setAllCaps(false);
+        light.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "light").apply());
+
+        Button compass = new Button(this);
+        compass.setText("Kompas");
+        compass.setAllCaps(false);
+        compass.setOnClickListener(v -> prefs.edit().putString(PREF_THEME, "compass").apply());
+
+        profiles.addView(dark, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        profiles.addView(light, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        profiles.addView(compass, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        box.addView(profiles);
+
+        box.addView(settingRow(
+                "Rozmiar tekstu",
+                PREF_FONT_SIZE,
+                19,
+                14,
+                32,
+                1,
+                ""
+        ));
+
+        box.addView(settingRow(
+                "Interlinia",
+                PREF_LINE_HEIGHT,
+                165,
+                120,
+                220,
+                5,
+                "%"
+        ));
+
+        box.addView(settingRow(
+                "Margines",
+                PREF_MARGIN,
+                22,
+                8,
+                48,
+                2,
+                " dp"
+        ));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Czytanie")
+                .setView(box)
+                .setNegativeButton("Anuluj", null)
+                .setPositiveButton("Zastosuj", (dialog, which) -> {
+                    saveReadingPosition();
+                    openBook(book);
+                })
+                .show();
+    }
+
+    private View settingRow(
+            String label,
+            String key,
+            int defaultValue,
+            int min,
+            int max,
+            int step,
+            String suffix
+    ) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(6), 0, 0);
+
+        TextView name = new TextView(this);
+        name.setText(label);
+        name.setTextSize(14);
+
+        Button minus = new Button(this);
+        minus.setText("−");
+
+        TextView value = new TextView(this);
+        value.setGravity(Gravity.CENTER);
+        value.setTextSize(14);
+
+        Button plus = new Button(this);
+        plus.setText("+");
+
+        Runnable refresh = () -> value.setText(
+                prefs.getInt(key, defaultValue) + suffix
+        );
+        refresh.run();
+
+        minus.setOnClickListener(v -> {
+            int current = prefs.getInt(key, defaultValue);
+            prefs.edit().putInt(key, Math.max(min, current - step)).apply();
+            refresh.run();
+        });
+
+        plus.setOnClickListener(v -> {
+            int current = prefs.getInt(key, defaultValue);
+            prefs.edit().putInt(key, Math.min(max, current + step)).apply();
+            refresh.run();
+        });
+
+        row.addView(name, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(minus);
+        row.addView(value, new LinearLayout.LayoutParams(dp(70), ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(plus);
+        return row;
+    }
+
+    private String applyReadingStyle(String html) {
+        int fontSize = prefs.getInt(PREF_FONT_SIZE, 19);
+        int lineHeight = prefs.getInt(PREF_LINE_HEIGHT, 165);
+        int margin = prefs.getInt(PREF_MARGIN, 22);
+        ThemeColors colors = currentThemeColors();
+
+        String css = "<style id=\"null-reader-user-style\">"
+                + "html,body{background:" + colors.backgroundCss + "!important;"
+                + "color:" + colors.foregroundCss + "!important;}"
+                + "body{font-size:" + fontSize + "px!important;"
+                + "line-height:" + (lineHeight / 100.0f) + "!important;"
+                + "padding-left:" + margin + "px!important;"
+                + "padding-right:" + margin + "px!important;}"
+                + "h1,h2,h3,h4,h5,h6{color:" + colors.foregroundCss + "!important;}"
+                + "a{color:" + colors.linkCss + "!important;}"
+                + "pre,code{background:" + colors.codeCss + "!important;}"
+                + "blockquote{color:" + colors.secondaryCss + "!important;}"
+                + "</style>";
+
+        int headEnd = html.toLowerCase().indexOf("</head>");
+        if (headEnd >= 0) {
+            return html.substring(0, headEnd) + css + html.substring(headEnd);
+        }
+        return css + html;
+    }
+
+    private ThemeColors currentThemeColors() {
+        String theme = prefs.getString(PREF_THEME, "dark");
+        if ("light".equals(theme)) {
+            return new ThemeColors(
+                    Color.rgb(247, 247, 244),
+                    Color.rgb(255, 255, 252),
+                    Color.rgb(28, 28, 28),
+                    "#f7f7f4",
+                    "#1c1c1c",
+                    "#4b5f8a",
+                    "#e9e9e5",
+                    "#555555"
+            );
+        }
+
+        if ("compass".equals(theme)) {
+            return new ThemeColors(
+                    Color.rgb(227, 216, 190),
+                    Color.rgb(214, 201, 172),
+                    Color.rgb(45, 38, 30),
+                    "#e3d8be",
+                    "#2d261e",
+                    "#6a4d2f",
+                    "#d1c3a3",
+                    "#655848"
+            );
+        }
+
+        return new ThemeColors(
+                Color.rgb(18, 18, 18),
+                Color.rgb(24, 24, 24),
+                Color.rgb(232, 232, 232),
+                "#121212",
+                "#e8e8e8",
+                "#cfcfcf",
+                "#202124",
+                "#cccccc"
+        );
     }
 
     private void handleBackNavigation() {
@@ -645,6 +856,90 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static class ThemeColors {
+        final int background;
+        final int chrome;
+        final int foreground;
+        final String backgroundCss;
+        final String foregroundCss;
+        final String linkCss;
+        final String codeCss;
+        final String secondaryCss;
+
+        ThemeColors(
+                int background,
+                int chrome,
+                int foreground,
+                String backgroundCss,
+                String foregroundCss,
+                String linkCss,
+                String codeCss,
+                String secondaryCss
+        ) {
+            this.background = background;
+            this.chrome = chrome;
+            this.foreground = foreground;
+            this.backgroundCss = backgroundCss;
+            this.foregroundCss = foregroundCss;
+            this.linkCss = linkCss;
+            this.codeCss = codeCss;
+            this.secondaryCss = secondaryCss;
+        }
+    }
+
+    private static class ZoomImageView extends ImageView {
+        private final ScaleGestureDetector scaleDetector;
+        private float zoom = 1.0f;
+        private float lastX;
+        private float lastY;
+
+        ZoomImageView(android.content.Context context) {
+            super(context);
+            setClickable(true);
+
+            scaleDetector = new ScaleGestureDetector(
+                    context,
+                    new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                        @Override
+                        public boolean onScale(ScaleGestureDetector detector) {
+                            zoom *= detector.getScaleFactor();
+                            zoom = Math.max(1.0f, Math.min(4.0f, zoom));
+                            setScaleX(zoom);
+                            setScaleY(zoom);
+
+                            if (zoom == 1.0f) {
+                                setTranslationX(0);
+                                setTranslationY(0);
+                            }
+                            return true;
+                        }
+                    }
+            );
+
+            setOnTouchListener((v, event) -> {
+                scaleDetector.onTouchEvent(event);
+
+                if (event.getPointerCount() == 1 && zoom > 1.0f && !scaleDetector.isInProgress()) {
+                    switch (event.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            lastX = event.getX();
+                            lastY = event.getY();
+                            return true;
+                        case MotionEvent.ACTION_MOVE:
+                            float dx = event.getX() - lastX;
+                            float dy = event.getY() - lastY;
+                            setTranslationX(getTranslationX() + dx);
+                            setTranslationY(getTranslationY() + dy);
+                            lastX = event.getX();
+                            lastY = event.getY();
+                            return true;
+                    }
+                }
+                return true;
+            });
+        }
     }
 
     private static class Book {
