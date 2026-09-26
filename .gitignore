@@ -19,3 +19,8 @@ apk_parts.txt
 
 # Local scratch / backups
 _compose_backup/
+
+# Signing secrets
+*.jks
+*.keystore
+release.properties
