@@ -6,9 +6,9 @@ The project is part of the wider **Null Yard** collection of small, practical to
 
 Project website: **https://nullreader.nullyard.com**
 
-Current signed alpha APK: **https://nullreader.nullyard.com/downloads/null-reader-alpha-0.1.apk**
+Current signed beta APK: **https://nullreader.nullyard.com/downloads/null-reader-0.2-beta1.apk**
 
-> **Status:** alpha / active development.  
+> **Status:** beta / active development.  
 > The app is already usable, but the interface and file handling are still being refined.
 
 ## What it reads
@@ -95,23 +95,23 @@ You can also open the project directly in Android Studio.
 
 ## Current limitations
 
-This is still an alpha build.
+This is an early beta build.
 
 - EPUB rendering is intentionally lightweight rather than a full EPUB engine
 - Very large EPUB files have not yet been heavily optimized
 - PDF reading is page-based; mobile PDFs remain constrained by fixed page layouts
 - PDF zoom is functional but still being polished
 - Rapid repeated changes in the reading settings can occasionally reset the document position; tracked in GitHub issue #1
-- External **Open with…** integration for EPUB/PDF/MD/TXT is planned next
-- EPUB title/author metadata presentation is being improved
+- Android **Open with…** integration is available for EPUB, PDF, Markdown and TXT
+- EPUB title/author metadata is read from OPF where available; unusual metadata remains an edge case
 
 ## Near-term roadmap
 
-1. Better title and author presentation
-2. Android **Open with…** integration
-3. More polished library UI
-4. Additional visual refinement of reading profiles
-5. Beta cleanup and wider device testing
+1. More polished library UI
+2. Additional visual refinement of reading profiles
+3. Wider device testing and bug fixing
+4. Better handling of edge-case EPUB metadata and documents
+5. Release packaging and distribution polish
 
 The goal is not to become a giant ebook-management platform. The goal is to remain a fast, quiet reader that gets out of the way.
 

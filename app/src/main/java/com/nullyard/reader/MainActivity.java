@@ -108,6 +108,55 @@ public class MainActivity extends Activity {
         loadLibrary();
         currentLibraryType = prefs.getString(PREF_LIBRARY_TAB, "EPUB");
         showLibrary();
+        handleViewIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleViewIntent(intent);
+    }
+
+    private void handleViewIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+
+        Uri uri = intent.getData();
+        if (uri == null) return;
+
+        int grantFlags = intent.getFlags() & (
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        );
+        if ((intent.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0
+                && (grantFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        uri,
+                        grantFlags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                );
+            } catch (Exception ignored) {
+            }
+        }
+
+        try {
+            String name = displayName(uri);
+            if (name == null || name.trim().isEmpty()) {
+                name = uri.getLastPathSegment() == null ? "document" : uri.getLastPathSegment();
+            }
+            String mime = intent.getType();
+            if (mime == null || mime.trim().isEmpty()) {
+                mime = getContentResolver().getType(uri);
+            }
+
+            Book incoming = createBook(name, uri, mime);
+            openBook(incoming);
+        } catch (Exception e) {
+            Toast.makeText(
+                    this,
+                    "Nie udało się otworzyć pliku: " + e.getMessage(),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
     }
 
     private void showLibrary() {
@@ -243,14 +292,17 @@ public class MainActivity extends Activity {
         });
 
         TextView name = new TextView(this);
-        name.setText(displayTitle(book.name));
+        name.setText(book.displayTitle());
         name.setTextColor(Color.WHITE);
         name.setTextSize(17);
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
 
         TextView meta = new TextView(this);
-        meta.setText(bookType(book));
+        String metaText = book.author != null && !book.author.trim().isEmpty()
+                ? book.author
+                : bookType(book);
+        meta.setText(metaText);
         meta.setTextColor(Color.rgb(135, 135, 135));
         meta.setTextSize(13);
         meta.setPadding(0, dp(3), 0, 0);
@@ -335,7 +387,7 @@ public class MainActivity extends Activity {
             if (book.uri.equals(uri)) return;
         }
 
-        Book imported = new Book(name, uri, mime);
+        Book imported = createBook(name, uri, mime);
         books.add(imported);
         currentLibraryType = bookType(imported);
         prefs.edit().putString(PREF_LIBRARY_TAB, currentLibraryType).apply();
@@ -433,7 +485,7 @@ public class MainActivity extends Activity {
 
         TextView top = new TextView(this);
         currentReaderTitle = top;
-        top.setText("‹  " + displayTitle(book.name));
+        top.setText("‹  " + book.displayTitle());
         top.setSingleLine(true);
         top.setEllipsize(TextUtils.TruncateAt.END);
         top.setTextColor(Color.WHITE);
@@ -588,7 +640,7 @@ public class MainActivity extends Activity {
         header.setBackgroundColor(colors.chrome);
 
         TextView top = new TextView(this);
-        top.setText("‹  " + displayTitle(book.name));
+        top.setText("‹  " + book.displayTitle());
         top.setSingleLine(true);
         top.setEllipsize(TextUtils.TruncateAt.END);
         top.setTextColor(colors.foreground);
@@ -943,12 +995,26 @@ public class MainActivity extends Activity {
                 Uri uri = Uri.parse(value);
                 String name = displayName(uri);
                 String mime = getContentResolver().getType(uri);
-                books.add(new Book(name, uri, mime));
+                books.add(createBook(name, uri, mime));
             } catch (Exception ignored) {
                 // Stale document permissions are ignored; a future library screen can expose cleanup.
             }
         }
         saveLibrary();
+    }
+
+    private Book createBook(String name, Uri uri, String mime) {
+        String lower = name == null ? "" : name.toLowerCase();
+        String normalizedMime = mime == null ? "" : mime.toLowerCase();
+        if (lower.endsWith(".epub") || normalizedMime.equals("application/epub+zip")) {
+            try {
+                EpubMetadata metadata = EpubReader.readMetadata(this, uri, displayTitle(name));
+                return new Book(name, uri, mime, metadata.title, metadata.author);
+            } catch (Exception ignored) {
+                // Broken or unusual EPUB metadata must never prevent the file from appearing.
+            }
+        }
+        return new Book(name, uri, mime, displayTitle(name), null);
     }
 
     private void saveLibrary() {
@@ -1175,16 +1241,34 @@ public class MainActivity extends Activity {
         final String name;
         final Uri uri;
         final String mimeType;
+        final String title;
+        final String author;
 
-        Book(String name, Uri uri, String mimeType) {
+        Book(String name, Uri uri, String mimeType, String title, String author) {
             this.name = name;
             this.uri = uri;
             this.mimeType = mimeType;
+            this.title = title;
+            this.author = author;
+        }
+
+        String displayTitle() {
+            return title == null || title.trim().isEmpty() ? name : title;
         }
 
         @Override
         public String toString() {
-            return name;
+            return displayTitle();
+        }
+    }
+
+    private static class EpubMetadata {
+        final String title;
+        final String author;
+
+        EpubMetadata(String title, String author) {
+            this.title = title;
+            this.author = author;
         }
     }
 
@@ -1331,6 +1415,27 @@ public class MainActivity extends Activity {
     }
 
     private static class EpubReader {
+        static EpubMetadata readMetadata(Activity activity, Uri uri, String fallbackTitle) throws Exception {
+            Map<String, byte[]> entries = unzip(activity.getContentResolver().openInputStream(uri));
+
+            byte[] containerBytes = entries.get("META-INF/container.xml");
+            if (containerBytes == null) throw new IllegalArgumentException("brak META-INF/container.xml");
+
+            Document container = parseXml(containerBytes);
+            NodeList roots = container.getElementsByTagNameNS("*", "rootfile");
+            if (roots.getLength() == 0) throw new IllegalArgumentException("brak pliku OPF");
+
+            String opfPath = ((Element) roots.item(0)).getAttribute("full-path");
+            byte[] opfBytes = entries.get(opfPath);
+            if (opfBytes == null) throw new IllegalArgumentException("nie znaleziono " + opfPath);
+
+            Document opf = parseXml(opfBytes);
+            return new EpubMetadata(
+                    metadataTitle(opf, fallbackTitle),
+                    metadataAuthor(opf)
+            );
+        }
+
         static String read(Activity activity, Uri uri, String fallbackTitle) throws Exception {
             Map<String, byte[]> entries = unzip(activity.getContentResolver().openInputStream(uri));
 
@@ -1455,6 +1560,15 @@ public class MainActivity extends Activity {
                 if (value != null && !value.trim().isEmpty()) return value.trim();
             }
             return fallback;
+        }
+
+        private static String metadataAuthor(Document opf) {
+            NodeList creators = opf.getElementsByTagNameNS("*", "creator");
+            if (creators.getLength() > 0) {
+                String value = creators.item(0).getTextContent();
+                if (value != null && !value.trim().isEmpty()) return value.trim();
+            }
+            return null;
         }
 
         private static boolean isHtml(String mediaType, String href) {
