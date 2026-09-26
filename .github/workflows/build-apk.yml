@@ -29,6 +29,9 @@ jobs:
       - name: Install Android SDK 36
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
+      - name: Prepare stable CI signing key
+        run: base64 -d ci/nullreader-ci.keystore.b64 > ci/nullreader-ci.keystore
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
 
