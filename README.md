@@ -6,7 +6,7 @@ The project is part of the wider **Null Yard** collection of small, practical to
 
 Project website: **https://nullreader.nullyard.com**
 
-Current beta APK: **https://nullreader.nullyard.com/downloads/null-reader-0.3-beta2.apk**
+Current beta APK: **https://nullreader.nullyard.com/downloads/null-reader-0.3-beta3.apk**
 
 > **Status:** beta / active development.  
 > The app is already usable, but the interface and file handling are still being refined.
