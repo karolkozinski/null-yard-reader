@@ -80,8 +80,10 @@ public class MainActivity extends Activity {
     private LinearLayout currentReaderRoot;
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
+    private TextView currentReaderAuthor;
     private final Handler previewHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingPreview;
+    private int previewGeneration = 0;
     private int currentPdfPage = 0;
     private PdfRenderer currentPdfRenderer;
     private ParcelFileDescriptor currentPdfDescriptor;
@@ -168,6 +170,9 @@ public class MainActivity extends Activity {
         currentReaderRoot = null;
         currentReaderHeader = null;
         currentReaderTitle = null;
+        currentReaderAuthor = null;
+        previewGeneration++;
+        applyDarkSystemBars();
         closePdf();
 
         LinearLayout root = new LinearLayout(this);
@@ -639,15 +644,39 @@ public class MainActivity extends Activity {
         header.setPadding(dp(8), 0, dp(6), 0);
         header.setBackgroundColor(colors.chrome);
 
+        applyReaderSystemBars(colors);
+
+        LinearLayout bookInfo = new LinearLayout(this);
+        bookInfo.setOrientation(LinearLayout.VERTICAL);
+        bookInfo.setGravity(Gravity.CENTER_VERTICAL);
+        bookInfo.setPadding(dp(10), dp(8), dp(8), dp(8));
+        bookInfo.setOnClickListener(v -> showLibrary());
+
         TextView top = new TextView(this);
+        currentReaderTitle = top;
         top.setText("‹  " + book.displayTitle());
         top.setSingleLine(true);
         top.setEllipsize(TextUtils.TruncateAt.END);
         top.setTextColor(colors.foreground);
         top.setTextSize(16);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(10), dp(12), dp(8), dp(12));
-        top.setOnClickListener(v -> showLibrary());
+
+        bookInfo.addView(top, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        if (book.author != null && !book.author.trim().isEmpty()) {
+            TextView author = new TextView(this);
+            currentReaderAuthor = author;
+            author.setText("   " + book.author);
+            author.setSingleLine(true);
+            author.setEllipsize(TextUtils.TruncateAt.END);
+            author.setTextColor(colors.foreground);
+            author.setAlpha(0.72f);
+            author.setTextSize(12);
+            bookInfo.addView(author, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else {
+            currentReaderAuthor = null;
+        }
 
         Button appearance = new Button(this);
         appearance.setText("Aa");
@@ -657,7 +686,7 @@ public class MainActivity extends Activity {
         appearance.setPadding(dp(12), 0, dp(12), 0);
         appearance.setOnClickListener(v -> showReadingSettings(book));
 
-        header.addView(top, new LinearLayout.LayoutParams(
+        header.addView(bookInfo, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         header.addView(appearance, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -854,33 +883,39 @@ public class MainActivity extends Activity {
     private void previewReadingStyle() {
         if (currentWebView == null || currentRawHtml == null) return;
 
+        final int generation = ++previewGeneration;
+
         if (pendingPreview != null) {
             previewHandler.removeCallbacks(pendingPreview);
         }
 
         pendingPreview = () -> {
-            if (currentWebView == null || currentRawHtml == null) return;
+            if (generation != previewGeneration || currentWebView == null || currentRawHtml == null) return;
 
-            final float progress = currentWebView.getScrollProgress();
+            final ReaderWebView targetWebView = currentWebView;
+            final float progress = targetWebView.getScrollProgress();
             ThemeColors colors = currentThemeColors();
 
             if (currentReaderRoot != null) currentReaderRoot.setBackgroundColor(colors.background);
             if (currentReaderHeader != null) currentReaderHeader.setBackgroundColor(colors.chrome);
             if (currentReaderTitle != null) currentReaderTitle.setTextColor(colors.foreground);
-            currentWebView.setBackgroundColor(colors.background);
+            if (currentReaderAuthor != null) currentReaderAuthor.setTextColor(colors.foreground);
+            targetWebView.setBackgroundColor(colors.background);
+            applyReaderSystemBars(colors);
 
-            currentWebView.setWebViewClient(new WebViewClient() {
+            targetWebView.setWebViewClient(new WebViewClient() {
                 @Override
                 public void onPageFinished(WebView view, String url) {
+                    if (generation != previewGeneration || view != currentWebView) return;
                     view.postDelayed(() -> {
-                        if (currentWebView != null) {
-                            currentWebView.scrollToProgress(progress);
+                        if (generation == previewGeneration && view == currentWebView) {
+                            targetWebView.scrollToProgress(progress);
                         }
                     }, 80);
                 }
             });
 
-            currentWebView.loadDataWithBaseURL(
+            targetWebView.loadDataWithBaseURL(
                     "https://local.nullyard.invalid/",
                     applyReadingStyle(currentRawHtml),
                     "text/html",
@@ -956,6 +991,32 @@ public class MainActivity extends Activity {
                 "#202124",
                 "#cccccc"
         );
+    }
+
+    private void applyReaderSystemBars(ThemeColors colors) {
+        Window window = getWindow();
+        window.setStatusBarColor(colors.chrome);
+        window.setNavigationBarColor(colors.background);
+
+        int flags = 0;
+        if (isLightColor(colors.chrome)) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (isLightColor(colors.background)) flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        window.getDecorView().setSystemUiVisibility(flags);
+    }
+
+    private void applyDarkSystemBars() {
+        Window window = getWindow();
+        window.setStatusBarColor(Color.rgb(18, 18, 18));
+        window.setNavigationBarColor(Color.rgb(18, 18, 18));
+        window.getDecorView().setSystemUiVisibility(0);
+    }
+
+    private boolean isLightColor(int color) {
+        double luminance =
+                (0.299 * Color.red(color))
+                + (0.587 * Color.green(color))
+                + (0.114 * Color.blue(color));
+        return luminance >= 160.0;
     }
 
     private void handleBackNavigation() {
