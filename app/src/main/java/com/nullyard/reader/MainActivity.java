@@ -1,6 +1,7 @@
 package com.nullyard.reader;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.UriPermission;
@@ -132,6 +133,10 @@ public class MainActivity extends Activity {
         list.setAdapter(adapter);
         list.setEmptyView(empty);
         list.setOnItemClickListener((parent, view, position, id) -> openBook(books.get(position)));
+        list.setOnItemLongClickListener((parent, view, position, id) -> {
+            confirmRemoveBook(books.get(position));
+            return true;
+        });
 
         Button add = new Button(this);
         add.setText("Dodaj książkę");
@@ -189,6 +194,33 @@ public class MainActivity extends Activity {
         books.add(new Book(name, uri, mime));
         saveLibrary();
         adapter.notifyDataSetChanged();
+    }
+
+    private void confirmRemoveBook(Book book) {
+        new AlertDialog.Builder(this)
+                .setTitle("Usuń z biblioteki?")
+                .setMessage("" + book.name + "\n\nPlik źródłowy pozostanie bez zmian.")
+                .setNegativeButton("Anuluj", null)
+                .setPositiveButton("Usuń", (dialog, which) -> removeBook(book))
+                .show();
+    }
+
+    private void removeBook(Book book) {
+        books.remove(book);
+        prefs.edit().remove(positionKey(book)).apply();
+
+        try {
+            getContentResolver().releasePersistableUriPermission(
+                    book.uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+            );
+        } catch (Exception ignored) {
+            // The document may not have a persistable permission; removing from our library still works.
+        }
+
+        saveLibrary();
+        if (adapter != null) adapter.notifyDataSetChanged();
+        Toast.makeText(this, "Usunięto z biblioteki", Toast.LENGTH_SHORT).show();
     }
 
     private void openBook(Book book) {
