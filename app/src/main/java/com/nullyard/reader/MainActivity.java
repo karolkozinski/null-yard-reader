@@ -8,6 +8,10 @@ import android.content.UriPermission;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.graphics.pdf.PdfRenderer;
@@ -81,6 +85,7 @@ public class MainActivity extends Activity {
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
     private TextView currentReaderAuthor;
+    private TextView currentReaderProgress;
     private View currentReaderTopChrome;
     private View currentReaderBottomChrome;
     private boolean readerChromeVisible = false;
@@ -174,6 +179,7 @@ public class MainActivity extends Activity {
         currentReaderHeader = null;
         currentReaderTitle = null;
         currentReaderAuthor = null;
+        currentReaderProgress = null;
         currentReaderTopChrome = null;
         currentReaderBottomChrome = null;
         readerChromeVisible = false;
@@ -291,8 +297,9 @@ public class MainActivity extends Activity {
 
     private void addBookRow(LinearLayout parent, Book book) {
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
         row.setBackgroundColor(Color.rgb(22, 22, 22));
         row.setClickable(true);
         row.setFocusable(true);
@@ -302,11 +309,23 @@ public class MainActivity extends Activity {
             return true;
         });
 
+        if ("EPUB".equals(bookType(book))) {
+            ImageView cover = new ImageView(this);
+            cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            cover.setImageBitmap(bookCoverBitmap(book));
+            row.addView(cover, new LinearLayout.LayoutParams(dp(58), dp(86)));
+        }
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setPadding("EPUB".equals(bookType(book)) ? dp(14) : 0, 0, 0, 0);
+
         TextView name = new TextView(this);
         name.setText(book.displayTitle());
         name.setTextColor(Color.WHITE);
         name.setTextSize(17);
-        name.setSingleLine(true);
+        name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
 
         TextView meta = new TextView(this);
@@ -316,10 +335,13 @@ public class MainActivity extends Activity {
         meta.setText(metaText);
         meta.setTextColor(Color.rgb(135, 135, 135));
         meta.setTextSize(13);
-        meta.setPadding(0, dp(3), 0, 0);
+        meta.setPadding(0, dp(4), 0, 0);
 
-        row.addView(name);
-        row.addView(meta);
+        info.addView(name);
+        info.addView(meta);
+        row.addView(info, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
         parent.addView(row, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -327,6 +349,110 @@ public class MainActivity extends Activity {
         divider.setBackgroundColor(Color.rgb(48, 48, 48));
         parent.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    }
+
+    private Bitmap bookCoverBitmap(Book book) {
+        if (book.coverData != null) {
+            Bitmap decoded = BitmapFactory.decodeByteArray(book.coverData, 0, book.coverData.length);
+            if (isUsableCover(decoded)) return decoded;
+        }
+        return generatedBookCover(book);
+    }
+
+    private boolean isUsableCover(Bitmap bitmap) {
+        if (bitmap == null) return false;
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        if (width < 120 || height < 160) return false;
+        float ratio = width / (float) height;
+        return ratio >= 0.45f && ratio <= 0.90f;
+    }
+
+    private Bitmap generatedBookCover(Book book) {
+        int width = 360;
+        int height = 540;
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+
+        int[] backgrounds = new int[] {
+                Color.rgb(31, 34, 36),
+                Color.rgb(56, 61, 51),
+                Color.rgb(36, 45, 56),
+                Color.rgb(87, 75, 58)
+        };
+        int index = Math.floorMod(book.displayTitle().hashCode(), backgrounds.length);
+        canvas.drawColor(backgrounds[index]);
+
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.rgb(226, 216, 190));
+
+        paint.setTextSize(24);
+        paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        canvas.drawText("NULL YARD", 30, 48, paint);
+
+        String initial = coverInitial(book.displayTitle());
+        paint.setTextSize(170);
+        paint.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
+        float initialWidth = paint.measureText(initial);
+        canvas.drawText(initial, (width - initialWidth) / 2.0f, 285, paint);
+
+        paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        paint.setTextSize(29);
+        drawCoverText(canvas, paint, book.displayTitle(), 30, 390, width - 60, 2);
+
+        if (book.author != null && !book.author.trim().isEmpty()) {
+            paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.NORMAL));
+            paint.setTextSize(21);
+            paint.setAlpha(190);
+            drawCoverText(canvas, paint, book.author, 30, 485, width - 60, 1);
+        }
+
+        paint.setAlpha(255);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2);
+        paint.setColor(Color.argb(100, 226, 216, 190));
+        canvas.drawRoundRect(new RectF(12, 12, width - 12, height - 12), 10, 10, paint);
+
+        return bitmap;
+    }
+
+    private String coverInitial(String title) {
+        if (title == null) return "N";
+        String clean = title.trim();
+        for (int i = 0; i < clean.length(); i++) {
+            char c = clean.charAt(i);
+            if (Character.isLetterOrDigit(c)) return String.valueOf(Character.toUpperCase(c));
+        }
+        return "N";
+    }
+
+    private void drawCoverText(Canvas canvas, Paint paint, String text, float x, float y, float maxWidth, int maxLines) {
+        if (text == null) return;
+        String[] words = text.trim().split("\\s+");
+        StringBuilder line = new StringBuilder();
+        int lineCount = 0;
+        float lineHeight = paint.getTextSize() * 1.18f;
+
+        for (String word : words) {
+            String candidate = line.length() == 0 ? word : line + " " + word;
+            if (paint.measureText(candidate) <= maxWidth) {
+                line.setLength(0);
+                line.append(candidate);
+                continue;
+            }
+
+            if (line.length() > 0) {
+                canvas.drawText(line.toString(), x, y + lineCount * lineHeight, paint);
+                lineCount++;
+                if (lineCount >= maxLines) return;
+            }
+            line.setLength(0);
+            line.append(word);
+        }
+
+        if (line.length() > 0 && lineCount < maxLines) {
+            canvas.drawText(line.toString(), x, y + lineCount * lineHeight, paint);
+        }
     }
 
     private List<Book> booksOfType(String type) {
@@ -698,6 +824,14 @@ public class MainActivity extends Activity {
             currentReaderAuthor = null;
         }
 
+        TextView progress = new TextView(this);
+        currentReaderProgress = progress;
+        progress.setTextColor(colors.foreground);
+        progress.setAlpha(0.68f);
+        progress.setTextSize(12);
+        progress.setPadding(dp(3), 0, dp(8), 0);
+        progress.setGravity(Gravity.CENTER_VERTICAL);
+
         Button appearance = new Button(this);
         appearance.setText("Aa");
         appearance.setAllCaps(false);
@@ -708,6 +842,8 @@ public class MainActivity extends Activity {
 
         header.addView(bookInfo, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        header.addView(progress, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
         header.addView(appearance, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -754,11 +890,17 @@ public class MainActivity extends Activity {
             return false;
         });
 
+        web.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) ->
+                updateReaderProgress());
+
         final int savedY = prefs.getInt(positionKey(book), 0);
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (savedY > 0) view.post(() -> view.scrollTo(0, savedY));
+                view.post(() -> {
+                    if (savedY > 0) view.scrollTo(0, savedY);
+                    updateReaderProgress();
+                });
             }
         });
 
@@ -952,6 +1094,7 @@ public class MainActivity extends Activity {
             if (currentReaderHeader != null) currentReaderHeader.setBackgroundColor(colors.chrome);
             if (currentReaderTitle != null) currentReaderTitle.setTextColor(colors.foreground);
             if (currentReaderAuthor != null) currentReaderAuthor.setTextColor(colors.foreground);
+            if (currentReaderProgress != null) currentReaderProgress.setTextColor(colors.foreground);
             targetWebView.setBackgroundColor(colors.background);
             applyReaderSystemBars(colors);
 
@@ -962,6 +1105,7 @@ public class MainActivity extends Activity {
                     view.postDelayed(() -> {
                         if (generation == previewGeneration && view == currentWebView) {
                             targetWebView.scrollToProgress(progress);
+                            updateReaderProgress();
                         }
                     }, 80);
                 }
@@ -1045,6 +1189,21 @@ public class MainActivity extends Activity {
         );
     }
 
+    private void updateReaderProgress() {
+        if (currentWebView == null || currentReaderProgress == null) return;
+
+        int contentHeight = currentWebView.computeVerticalScrollRange();
+        int viewportHeight = Math.max(1, getResources().getDisplayMetrics().heightPixels);
+        int maxScroll = Math.max(1, contentHeight - currentWebView.computeVerticalScrollExtent());
+        int scrollY = Math.max(0, currentWebView.getScrollY());
+
+        int totalPages = Math.max(1, (int) Math.ceil(contentHeight / (double) viewportHeight));
+        int currentPage = Math.min(totalPages, Math.max(1, (scrollY / viewportHeight) + 1));
+        int percent = Math.min(100, Math.max(0, Math.round(scrollY * 100.0f / maxScroll)));
+
+        currentReaderProgress.setText(currentPage + " / " + totalPages + " · " + percent + "%");
+    }
+
     private void toggleReaderChrome() {
         if (!readerOpen) return;
         setReaderChromeVisible(!readerChromeVisible);
@@ -1056,6 +1215,7 @@ public class MainActivity extends Activity {
         int visibility = visible ? View.VISIBLE : View.GONE;
         if (currentReaderTopChrome != null) currentReaderTopChrome.setVisibility(visibility);
         if (currentReaderBottomChrome != null) currentReaderBottomChrome.setVisibility(visibility);
+        if (visible) updateReaderProgress();
 
         if (visible) {
             applyReaderSystemBars(currentThemeColors());
@@ -1162,12 +1322,12 @@ public class MainActivity extends Activity {
         if (lower.endsWith(".epub") || normalizedMime.equals("application/epub+zip")) {
             try {
                 EpubMetadata metadata = EpubReader.readMetadata(this, uri, displayTitle(name));
-                return new Book(name, uri, mime, metadata.title, metadata.author);
+                return new Book(name, uri, mime, metadata.title, metadata.author, metadata.coverData);
             } catch (Exception ignored) {
                 // Broken or unusual EPUB metadata must never prevent the file from appearing.
             }
         }
-        return new Book(name, uri, mime, displayTitle(name), null);
+        return new Book(name, uri, mime, displayTitle(name), null, null);
     }
 
     private void saveLibrary() {
@@ -1415,13 +1575,15 @@ public class MainActivity extends Activity {
         final String mimeType;
         final String title;
         final String author;
+        final byte[] coverData;
 
-        Book(String name, Uri uri, String mimeType, String title, String author) {
+        Book(String name, Uri uri, String mimeType, String title, String author, byte[] coverData) {
             this.name = name;
             this.uri = uri;
             this.mimeType = mimeType;
             this.title = title;
             this.author = author;
+            this.coverData = coverData;
         }
 
         String displayTitle() {
@@ -1437,10 +1599,12 @@ public class MainActivity extends Activity {
     private static class EpubMetadata {
         final String title;
         final String author;
+        final byte[] coverData;
 
-        EpubMetadata(String title, String author) {
+        EpubMetadata(String title, String author, byte[] coverData) {
             this.title = title;
             this.author = author;
+            this.coverData = coverData;
         }
     }
 
@@ -1604,7 +1768,8 @@ public class MainActivity extends Activity {
             Document opf = parseXml(opfBytes);
             return new EpubMetadata(
                     metadataTitle(opf, fallbackTitle),
-                    metadataAuthor(opf)
+                    metadataAuthor(opf),
+                    coverData(opf, parent(opfPath), entries)
             );
         }
 
@@ -1723,6 +1888,57 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
                 // Android XML parsers differ by API level; unsupported hardening flags are skipped.
             }
+        }
+
+        private static byte[] coverData(Document opf, String opfDir, Map<String, byte[]> entries) {
+            NodeList items = opf.getElementsByTagNameNS("*", "item");
+
+            for (int i = 0; i < items.getLength(); i++) {
+                Element item = (Element) items.item(i);
+                String properties = item.getAttribute("properties");
+                String mediaType = item.getAttribute("media-type");
+                if (properties != null && properties.contains("cover-image") && isImageMediaType(mediaType)) {
+                    byte[] bytes = entries.get(resolve(opfDir, item.getAttribute("href")));
+                    if (bytes != null) return bytes;
+                }
+            }
+
+            String coverId = null;
+            NodeList metas = opf.getElementsByTagNameNS("*", "meta");
+            for (int i = 0; i < metas.getLength(); i++) {
+                Element meta = (Element) metas.item(i);
+                if ("cover".equalsIgnoreCase(meta.getAttribute("name"))) {
+                    coverId = meta.getAttribute("content");
+                    break;
+                }
+            }
+
+            if (coverId != null && !coverId.isEmpty()) {
+                for (int i = 0; i < items.getLength(); i++) {
+                    Element item = (Element) items.item(i);
+                    if (coverId.equals(item.getAttribute("id")) && isImageMediaType(item.getAttribute("media-type"))) {
+                        byte[] bytes = entries.get(resolve(opfDir, item.getAttribute("href")));
+                        if (bytes != null) return bytes;
+                    }
+                }
+            }
+
+            for (int i = 0; i < items.getLength(); i++) {
+                Element item = (Element) items.item(i);
+                String id = item.getAttribute("id").toLowerCase();
+                String href = item.getAttribute("href").toLowerCase();
+                if ((id.contains("cover") || href.contains("cover"))
+                        && isImageMediaType(item.getAttribute("media-type"))) {
+                    byte[] bytes = entries.get(resolve(opfDir, item.getAttribute("href")));
+                    if (bytes != null) return bytes;
+                }
+            }
+
+            return null;
+        }
+
+        private static boolean isImageMediaType(String mediaType) {
+            return mediaType != null && mediaType.toLowerCase().startsWith("image/");
         }
 
         private static String metadataTitle(Document opf, String fallback) {
