@@ -7,9 +7,13 @@ import android.content.SharedPreferences;
 import android.content.UriPermission;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.pdf.PdfRenderer;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.text.TextUtils;
@@ -23,9 +27,11 @@ import android.webkit.WebViewClient;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.window.OnBackInvokedDispatcher;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -59,6 +65,9 @@ public class MainActivity extends Activity {
     private boolean readerOpen = false;
     private Book currentBook;
     private WebView currentWebView;
+    private int currentPdfPage = 0;
+    private PdfRenderer currentPdfRenderer;
+    private ParcelFileDescriptor currentPdfDescriptor;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -70,6 +79,14 @@ public class MainActivity extends Activity {
         window.getDecorView().setSystemUiVisibility(0);
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    () -> handleBackNavigation()
+            );
+        }
+
         loadLibrary();
         showLibrary();
     }
@@ -79,6 +96,7 @@ public class MainActivity extends Activity {
         readerOpen = false;
         currentBook = null;
         currentWebView = null;
+        closePdf();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -270,7 +288,7 @@ public class MainActivity extends Activity {
 
     private void removeBook(Book book) {
         books.remove(book);
-        prefs.edit().remove(positionKey(book)).apply();
+        prefs.edit().remove(positionKey(book)).remove(pdfPageKey(book)).apply();
 
         try {
             getContentResolver().releasePersistableUriPermission(
@@ -300,9 +318,185 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            Toast.makeText(this, "PDF będzie następny.", Toast.LENGTH_SHORT).show();
+            if ("PDF".equals(type)) {
+                showPdfReader(book);
+                return;
+            }
         } catch (Exception e) {
             Toast.makeText(this, "Nie udało się otworzyć pliku: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showPdfReader(Book book) throws Exception {
+        closePdf();
+
+        currentPdfDescriptor = getContentResolver().openFileDescriptor(book.uri, "r");
+        if (currentPdfDescriptor == null) throw new IllegalArgumentException("brak dostępu do PDF");
+
+        currentPdfRenderer = new PdfRenderer(currentPdfDescriptor);
+        if (currentPdfRenderer.getPageCount() == 0) {
+            throw new IllegalArgumentException("PDF nie zawiera stron");
+        }
+
+        readerOpen = true;
+        currentBook = book;
+        currentWebView = null;
+
+        int savedPage = prefs.getInt(pdfPageKey(book), 0);
+        currentPdfPage = Math.max(0, Math.min(savedPage, currentPdfRenderer.getPageCount() - 1));
+
+        renderPdfScreen(book);
+    }
+
+    private void renderPdfScreen(Book book) {
+        if (currentPdfRenderer == null) return;
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(18, 18, 18));
+
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            v.setPadding(
+                    0,
+                    insets.getSystemWindowInsetTop(),
+                    0,
+                    insets.getSystemWindowInsetBottom()
+            );
+            return insets;
+        });
+
+        TextView top = new TextView(this);
+        top.setText("‹  " + displayTitle(book.name));
+        top.setSingleLine(true);
+        top.setEllipsize(TextUtils.TruncateAt.END);
+        top.setTextColor(Color.WHITE);
+        top.setTextSize(16);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(18), dp(12), dp(18), dp(12));
+        top.setBackgroundColor(Color.rgb(24, 24, 24));
+        top.setOnClickListener(v -> showLibrary());
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(32, 32, 32));
+
+        ImageView image = new ImageView(this);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setPadding(dp(8), dp(8), dp(8), dp(8));
+
+        renderPdfPageInto(image);
+        scroll.addView(image, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+        controls.setPadding(dp(10), dp(8), dp(10), dp(8));
+        controls.setBackgroundColor(Color.rgb(24, 24, 24));
+
+        Button previous = new Button(this);
+        previous.setText("‹");
+        previous.setEnabled(currentPdfPage > 0);
+        previous.setOnClickListener(v -> {
+            savePdfPage();
+            if (currentPdfPage > 0) {
+                currentPdfPage--;
+                renderPdfScreen(book);
+            }
+        });
+
+        TextView page = new TextView(this);
+        page.setText((currentPdfPage + 1) + " / " + currentPdfRenderer.getPageCount());
+        page.setTextColor(Color.WHITE);
+        page.setTextSize(14);
+        page.setGravity(Gravity.CENTER);
+
+        Button next = new Button(this);
+        next.setText("›");
+        next.setEnabled(currentPdfPage < currentPdfRenderer.getPageCount() - 1);
+        next.setOnClickListener(v -> {
+            savePdfPage();
+            if (currentPdfPage < currentPdfRenderer.getPageCount() - 1) {
+                currentPdfPage++;
+                renderPdfScreen(book);
+            }
+        });
+
+        controls.addView(previous, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        controls.addView(page, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 2));
+        controls.addView(next, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        root.addView(top, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(controls, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        setContentView(root);
+        root.requestApplyInsets();
+    }
+
+    private void renderPdfPageInto(ImageView image) {
+        PdfRenderer.Page page = null;
+        try {
+            page = currentPdfRenderer.openPage(currentPdfPage);
+
+            int targetWidth = Math.max(
+                    getResources().getDisplayMetrics().widthPixels - dp(16),
+                    dp(320)
+            );
+            float scale = (float) targetWidth / (float) page.getWidth();
+            int targetHeight = Math.max(1, Math.round(page.getHeight() * scale));
+
+            Bitmap bitmap = Bitmap.createBitmap(
+                    targetWidth,
+                    targetHeight,
+                    Bitmap.Config.ARGB_8888
+            );
+            bitmap.eraseColor(Color.WHITE);
+
+            page.render(
+                    bitmap,
+                    null,
+                    null,
+                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+            );
+            image.setImageBitmap(bitmap);
+        } finally {
+            if (page != null) page.close();
+        }
+    }
+
+    private void savePdfPage() {
+        if (currentBook == null || currentPdfRenderer == null) return;
+        prefs.edit().putInt(pdfPageKey(currentBook), currentPdfPage).apply();
+    }
+
+    private String pdfPageKey(Book book) {
+        return "pdf-page:" + book.uri.toString();
+    }
+
+    private void closePdf() {
+        savePdfPage();
+
+        if (currentPdfRenderer != null) {
+            try {
+                currentPdfRenderer.close();
+            } catch (Exception ignored) {
+            }
+            currentPdfRenderer = null;
+        }
+
+        if (currentPdfDescriptor != null) {
+            try {
+                currentPdfDescriptor.close();
+            } catch (Exception ignored) {
+            }
+            currentPdfDescriptor = null;
         }
     }
 
@@ -372,10 +566,18 @@ public class MainActivity extends Activity {
         root.requestApplyInsets();
     }
 
-    @Override
-    public void onBackPressed() {
+    private void handleBackNavigation() {
         if (readerOpen) {
             showLibrary();
+        } else {
+            moveTaskToBack(true);
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            handleBackNavigation();
         } else {
             super.onBackPressed();
         }
@@ -384,6 +586,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         saveReadingPosition();
+        savePdfPage();
         super.onPause();
     }
 
@@ -479,14 +682,15 @@ public class MainActivity extends Activity {
 
             return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                     + "<style>"
-                    + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;}"
-                    + "body{font-family:serif;font-size:19px;line-height:1.65;padding:28px 22px 72px;}"
+                    + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;max-width:100%;overflow-x:hidden;}"
+                    + "*{box-sizing:border-box;}"
+                    + "body{font-family:serif;font-size:19px;line-height:1.65;padding:28px 28px 72px;max-width:100%;overflow-wrap:anywhere;}"
                     + "h1,h2,h3,h4,h5,h6{font-family:sans-serif;line-height:1.25;color:#fff;margin:1.5em 0 .7em;}"
                     + "h1{font-size:1.8em}h2{font-size:1.5em}h3{font-size:1.25em}"
                     + "p{margin:0 0 1em;}ul,ol{padding-left:1.5em;margin:0 0 1em;}li{margin:.25em 0;}"
                     + "blockquote{border-left:3px solid #555;padding:.2em 0 .2em 1em;margin:1em 0;color:#ccc;}"
                     + "code{font-family:monospace;background:#202124;padding:.12em .3em;border-radius:3px;}"
-                    + "pre{font-family:monospace;background:#202124;padding:1em;overflow-x:auto;white-space:pre-wrap;}"
+                    + "pre{font-family:monospace;background:#202124;padding:1em;max-width:100%;overflow-x:auto;white-space:pre-wrap;word-break:break-word;}"
                     + "a{color:#cfcfcf;}hr{border:0;border-top:1px solid #333;margin:2em 0;}"
                     + "</style><title>" + escapeHtml(titleWithoutExtension(fallbackTitle))
                     + "</title></head><body>" + body + "</body></html>";
@@ -665,8 +869,9 @@ public class MainActivity extends Activity {
 
             return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                     + "<style>"
-                    + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;}"
-                    + "body{font-family:serif;font-size:19px;line-height:1.65;padding:28px 22px 72px;}"
+                    + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;max-width:100%;overflow-x:hidden;}"
+                    + "*{box-sizing:border-box;}"
+                    + "body{font-family:serif;font-size:19px;line-height:1.65;padding:28px 28px 72px;max-width:100%;overflow-wrap:anywhere;}"
                     + "h1,h2,h3,h4{font-family:sans-serif;line-height:1.25;color:#fff;margin-top:1.6em;}"
                     + "p{margin:0 0 1em;} img{max-width:100%;height:auto;display:block;margin:1.5em auto;}"
                     + "a{color:#cfcfcf;} .chapter+ .chapter{margin-top:3em;padding-top:2em;border-top:1px solid #333;}"
