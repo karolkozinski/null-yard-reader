@@ -2,6 +2,8 @@ package com.nullyard.reader;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.UriPermission;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
@@ -14,6 +16,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -33,9 +36,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -43,10 +48,15 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 public class MainActivity extends Activity {
     private static final int PICK_BOOK = 1001;
+    private static final String PREFS = "reader_state";
+    private static final String PREF_LIBRARY = "library_uris";
 
     private final ArrayList<Book> books = new ArrayList<>();
     private ArrayAdapter<Book> adapter;
+    private SharedPreferences prefs;
     private boolean readerOpen = false;
+    private Book currentBook;
+    private WebView currentWebView;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -57,11 +67,16 @@ public class MainActivity extends Activity {
         window.setNavigationBarColor(Color.rgb(18, 18, 18));
         window.getDecorView().setSystemUiVisibility(0);
 
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        loadLibrary();
         showLibrary();
     }
 
     private void showLibrary() {
+        if (readerOpen) saveReadingPosition();
         readerOpen = false;
+        currentBook = null;
+        currentWebView = null;
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -172,6 +187,7 @@ public class MainActivity extends Activity {
         }
 
         books.add(new Book(name, uri, mime));
+        saveLibrary();
         adapter.notifyDataSetChanged();
     }
 
@@ -196,6 +212,7 @@ public class MainActivity extends Activity {
 
     private void showReader(Book book, String html) {
         readerOpen = true;
+        currentBook = book;
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -221,6 +238,7 @@ public class MainActivity extends Activity {
         top.setOnClickListener(v -> showLibrary());
 
         WebView web = new WebView(this);
+        currentWebView = web;
         web.setBackgroundColor(Color.rgb(18, 18, 18));
 
         WebSettings settings = web.getSettings();
@@ -230,6 +248,14 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setTextZoom(100);
+
+        final int savedY = prefs.getInt(positionKey(book), 0);
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (savedY > 0) view.post(() -> view.scrollTo(0, savedY));
+            }
+        });
 
         web.loadDataWithBaseURL(
                 "https://local.nullyard.invalid/",
@@ -255,6 +281,48 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        saveReadingPosition();
+        super.onPause();
+    }
+
+    private void loadLibrary() {
+        Set<String> uris = new HashSet<>(prefs.getStringSet(PREF_LIBRARY, new HashSet<>()));
+
+        for (UriPermission permission : getContentResolver().getPersistedUriPermissions()) {
+            if (permission.isReadPermission()) uris.add(permission.getUri().toString());
+        }
+
+        books.clear();
+        for (String value : uris) {
+            try {
+                Uri uri = Uri.parse(value);
+                String name = displayName(uri);
+                String mime = getContentResolver().getType(uri);
+                books.add(new Book(name, uri, mime));
+            } catch (Exception ignored) {
+                // Stale document permissions are ignored; a future library screen can expose cleanup.
+            }
+        }
+        saveLibrary();
+    }
+
+    private void saveLibrary() {
+        Set<String> uris = new HashSet<>();
+        for (Book book : books) uris.add(book.uri.toString());
+        prefs.edit().putStringSet(PREF_LIBRARY, uris).apply();
+    }
+
+    private void saveReadingPosition() {
+        if (!readerOpen || currentBook == null || currentWebView == null) return;
+        prefs.edit().putInt(positionKey(currentBook), currentWebView.getScrollY()).apply();
+    }
+
+    private String positionKey(Book book) {
+        return "position:" + book.uri.toString();
     }
 
     private String displayName(Uri uri) {
