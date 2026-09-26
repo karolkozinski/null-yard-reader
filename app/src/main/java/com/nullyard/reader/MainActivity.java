@@ -1908,6 +1908,7 @@ public class MainActivity extends Activity {
             }
 
             String opfDir = parent(opfPath);
+            Set<String> coverDocuments = coverDocumentPaths(opf, opfDir);
             List<String> spine = new ArrayList<>();
             NodeList refs = opf.getElementsByTagNameNS("*", "itemref");
             for (int i = 0; i < refs.getLength(); i++) {
@@ -1915,7 +1916,10 @@ public class MainActivity extends Activity {
                 ManifestItem item = manifest.get(ref.getAttribute("idref"));
                 if (item == null) continue;
                 if (!isHtml(item.mediaType, item.href)) continue;
-                spine.add(resolve(opfDir, item.href));
+
+                String resolvedPath = resolve(opfDir, item.href);
+                if (coverDocuments.contains(resolvedPath)) continue;
+                spine.add(resolvedPath);
             }
 
             if (spine.isEmpty()) throw new IllegalArgumentException("EPUB nie ma czytelnego spine");
@@ -2048,6 +2052,21 @@ public class MainActivity extends Activity {
 
         private static boolean isImageMediaType(String mediaType) {
             return mediaType != null && mediaType.toLowerCase().startsWith("image/");
+        }
+
+        private static Set<String> coverDocumentPaths(Document opf, String opfDir) {
+            Set<String> paths = new HashSet<>();
+            NodeList references = opf.getElementsByTagNameNS("*", "reference");
+            for (int i = 0; i < references.getLength(); i++) {
+                Element reference = (Element) references.item(i);
+                if (!"cover".equalsIgnoreCase(reference.getAttribute("type"))) continue;
+
+                String href = reference.getAttribute("href");
+                if (href != null && !href.trim().isEmpty()) {
+                    paths.add(resolve(opfDir, href));
+                }
+            }
+            return paths;
         }
 
         private static String metadataTitle(Document opf, String fallback) {
