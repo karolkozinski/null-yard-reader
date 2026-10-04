@@ -86,7 +86,7 @@ public class WolneLekturyActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
 
         TextView intro = new TextView(this);
-        intro.setText("Darmowe książki z wolnelektury.pl");
+        intro.setText("Darmowe książki z wolnelektury.pl\\nPoniżej pokazujemy przykładowe 60 pozycji. Wyszukiwarka przeszukuje cały katalog.");
         intro.setTextColor(Color.rgb(145, 145, 145));
         intro.setTextSize(13);
         intro.setPadding(0, dp(3), 0, dp(14));
