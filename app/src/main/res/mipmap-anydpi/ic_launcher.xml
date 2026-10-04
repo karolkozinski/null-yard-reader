@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/ic_launcher_art"
-    android:gravity="fill" />
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_launcher_background" />
+    <item
+        android:left="5.4dp"
+        android:top="5.4dp"
+        android:right="5.4dp"
+        android:bottom="5.4dp"
+        android:drawable="@drawable/ic_launcher_art" />
+</layer-list>

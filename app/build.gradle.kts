@@ -22,8 +22,8 @@ android {
         applicationId = "com.nullyard.reader"
         minSdk = 28
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3-beta3"
+        versionCode = 7
+        versionName = "0.3-beta4"
     }
 
     signingConfigs {
