@@ -98,7 +98,8 @@ public class MainActivity extends Activity {
     private int currentPdfPage = 0;
     private PdfRenderer currentPdfRenderer;
     private ParcelFileDescriptor currentPdfDescriptor;
-    private String currentLibraryType = "EPUB";\n    private boolean currentBookFromOnline = false;
+    private String currentLibraryType = "EPUB";
+    private boolean currentBookFromOnline = false;
 
     @Override
     protected void onCreate(Bundle state) {
