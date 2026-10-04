@@ -36,6 +36,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ImageView;
 import android.widget.ScrollView;
@@ -83,7 +84,7 @@ public class MainActivity extends Activity {
     private Book currentBook;
     private ReaderWebView currentWebView;
     private String currentRawHtml;
-    private LinearLayout currentReaderRoot;
+    private ViewGroup currentReaderRoot;
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
     private TextView currentReaderAuthor;
@@ -812,24 +813,9 @@ public class MainActivity extends Activity {
 
         ThemeColors colors = currentThemeColors();
 
-        LinearLayout root = new LinearLayout(this);
+        FrameLayout root = new FrameLayout(this);
         currentReaderRoot = root;
-        root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(colors.background);
-
-        root.setOnApplyWindowInsetsListener((v, insets) -> {
-            if (readerChromeVisible) {
-                v.setPadding(
-                        0,
-                        insets.getSystemWindowInsetTop(),
-                        0,
-                        insets.getSystemWindowInsetBottom()
-                );
-            } else {
-                v.setPadding(0, 0, 0, 0);
-            }
-            return insets;
-        });
 
         LinearLayout header = new LinearLayout(this);
         currentReaderHeader = header;
@@ -990,10 +976,29 @@ public class MainActivity extends Activity {
                 null
         );
 
-        root.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(web, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(web, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+        );
+        root.addView(header, headerParams);
+        header.setElevation(dp(6));
+
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            ViewGroup.LayoutParams rawParams = header.getLayoutParams();
+            if (rawParams instanceof FrameLayout.LayoutParams) {
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
+                int topInset = insets.getSystemWindowInsetTop();
+                if (params.topMargin != topInset) {
+                    params.topMargin = topInset;
+                    header.setLayoutParams(params);
+                }
+            }
+            return insets;
+        });
 
         setContentView(root);
         setReaderChromeVisible(false);
@@ -1350,7 +1355,10 @@ public class MainActivity extends Activity {
         window.setStatusBarColor(colors.chrome);
         window.setNavigationBarColor(colors.background);
 
-        int flags = 0;
+        int flags =
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
         if (isLightColor(colors.chrome)) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         if (isLightColor(colors.background)) flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
         window.getDecorView().setSystemUiVisibility(flags);
