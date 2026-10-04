@@ -135,6 +135,10 @@ public class MainActivity extends Activity {
         if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
 
         Uri uri = intent.getData();
+        String onlinePath = intent.getStringExtra("online_epub_path");
+        if (onlinePath != null && !onlinePath.trim().isEmpty()) {
+            uri = Uri.fromFile(new java.io.File(onlinePath));
+        }
         if (uri == null) return;
 
         int grantFlags = intent.getFlags() & (
@@ -222,6 +226,7 @@ public class MainActivity extends Activity {
         tabs.addView(libraryTabButton("EPUB", "EPUB"), libraryTabLayoutParams());
         tabs.addView(libraryTabButton("PDF", "PDF"), libraryTabLayoutParams());
         tabs.addView(libraryTabButton("Tekst", "MD"), libraryTabLayoutParams());
+        tabs.addView(onlineTabButton(), libraryTabLayoutParams());
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -288,6 +293,27 @@ public class MainActivity extends Activity {
                 showLibrary();
             }
         });
+        return button;
+    }
+
+    private Button onlineTabButton() {
+        Button button = new Button(this);
+        button.setText("Online");
+        button.setAllCaps(false);
+        button.setTextSize(14);
+        button.setMinHeight(dp(46));
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+        button.setTextColor(Color.rgb(166, 176, 170));
+
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(10));
+        background.setColor(Color.rgb(30, 35, 32));
+        background.setStroke(dp(1), Color.rgb(49, 58, 53));
+        button.setBackground(background);
+
+        button.setOnClickListener(v ->
+                startActivity(new Intent(this, WolneLekturyActivity.class)));
         return button;
     }
 
