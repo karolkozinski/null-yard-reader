@@ -137,7 +137,8 @@ public class MainActivity extends Activity {
 
         Uri uri = intent.getData();
         String onlinePath = intent.getStringExtra("online_epub_path");
-        if (onlinePath != null && !onlinePath.trim().isEmpty()) {
+        currentBookFromOnline = onlinePath != null && !onlinePath.trim().isEmpty();
+        if (currentBookFromOnline) {
             uri = Uri.fromFile(new java.io.File(onlinePath));
         }
         if (uri == null) return;
@@ -857,7 +858,7 @@ public class MainActivity extends Activity {
         bookInfo.setOrientation(LinearLayout.VERTICAL);
         bookInfo.setGravity(Gravity.CENTER_VERTICAL);
         bookInfo.setPadding(dp(10), dp(8), dp(8), dp(8));
-        bookInfo.setOnClickListener(v -> showLibrary());
+        bookInfo.setOnClickListener(v -> leaveReader());
 
         TextView top = new TextView(this);
         currentReaderTitle = top;
@@ -1406,14 +1407,19 @@ public class MainActivity extends Activity {
         return luminance >= 160.0;
     }
 
+    private void leaveReader() {
+        if (currentBookFromOnline) {
+            saveReadingPosition();
+            currentBookFromOnline = false;
+            finish();
+            return;
+        }
+        showLibrary();
+    }
+
     private void handleBackNavigation() {
         if (readerOpen) {
-            if (currentBookFromOnline) {
-                currentBookFromOnline = false;
-                finish();
-                return;
-            }
-            showLibrary();
+            leaveReader();
         } else {
             moveTaskToBack(true);
         }
