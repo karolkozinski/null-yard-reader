@@ -25,9 +25,10 @@ final class OnlineLibrary {
         final String path;
         final String coverUrl;
         final String coverPath;
+        final String language;
 
         Entry(String provider, String title, String author, String sourceUrl, String path,
-              String coverUrl, String coverPath) {
+              String coverUrl, String coverPath, String language) {
             this.provider = provider;
             this.title = title;
             this.author = author;
@@ -35,6 +36,7 @@ final class OnlineLibrary {
             this.path = path;
             this.coverUrl = coverUrl;
             this.coverPath = coverPath;
+            this.language = language;
         }
 
         JSONObject toJson() throws Exception {
@@ -46,6 +48,7 @@ final class OnlineLibrary {
             object.put("path", path);
             object.put("coverUrl", coverUrl);
             object.put("coverPath", coverPath);
+            object.put("language", language);
             return object;
         }
 
@@ -57,7 +60,8 @@ final class OnlineLibrary {
                     object.optString("sourceUrl", ""),
                     object.optString("path", ""),
                     object.optString("coverUrl", ""),
-                    object.optString("coverPath", "")
+                    object.optString("coverPath", ""),
+                    object.optString("language", "pl")
             );
         }
     }
