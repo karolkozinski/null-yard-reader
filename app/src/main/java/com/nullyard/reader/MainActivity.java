@@ -1766,7 +1766,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static class EpubMetadata {
+    static class EpubMetadata {
         final String title;
         final String author;
         final byte[] coverData;
@@ -1920,7 +1920,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static class EpubReader {
+    static class EpubReader {
         static EpubMetadata readMetadata(Activity activity, Uri uri, String fallbackTitle) throws Exception {
             Map<String, byte[]> entries = unzip(activity.getContentResolver().openInputStream(uri));
 
