@@ -1,5 +1,6 @@
 package com.nullyard.reader;
 
+import java.net.HttpURLConnection;
 import java.util.List;
 
 interface OnlineProvider {
@@ -13,6 +14,13 @@ interface OnlineProvider {
 
     default boolean canDownload(Book book) {
         return true;
+    }
+
+    default boolean includeInAllSearch() {
+        return true;
+    }
+
+    default void configureConnection(HttpURLConnection connection) {
     }
 
     final class Book {
