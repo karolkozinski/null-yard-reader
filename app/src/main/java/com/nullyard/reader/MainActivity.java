@@ -1408,6 +1408,11 @@ public class MainActivity extends Activity {
 
     private void handleBackNavigation() {
         if (readerOpen) {
+            if (currentBookFromOnline) {
+                currentBookFromOnline = false;
+                finish();
+                return;
+            }
             showLibrary();
         } else {
             moveTaskToBack(true);
