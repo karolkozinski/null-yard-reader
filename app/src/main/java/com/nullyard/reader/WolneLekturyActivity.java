@@ -20,21 +20,17 @@ import android.widget.LinearLayout;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -44,13 +40,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class WolneLekturyActivity extends Activity {
-    private static final String API_BOOKS = "https://wolnelektury.pl/api/books/?format=json";
-    private static final String SOURCE = "Wolne Lektury";
+    private static final String ALL_PROVIDERS = "all";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ExecutorService imageExecutor = Executors.newFixedThreadPool(3);
     private final Map<String, Bitmap> coverCache = new HashMap<>();
-    private final ArrayList<CatalogBook> catalog = new ArrayList<>();
+    private final ArrayList<OnlineProvider> providers = new ArrayList<>();
+    private final ArrayList<OnlineProvider.Book> catalog = new ArrayList<>();
+    private String selectedProviderId = ALL_PROVIDERS;
     private LinearLayout results;
     private EditText search;
     private ProgressBar progress;
@@ -59,6 +56,7 @@ public class WolneLekturyActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        providers.add(new WolneLekturyProvider());
         showCatalog();
         loadCatalog();
     }
@@ -103,10 +101,35 @@ public class WolneLekturyActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
 
         TextView intro = new TextView(this);
-        intro.setText("Wolne Lektury · darmowe EPUB-y");
+        intro.setText("Wyszukuj i pobieraj książki z wybranych źródeł");
         intro.setTextColor(Color.rgb(145, 145, 145));
         intro.setTextSize(13);
-        intro.setPadding(0, dp(3), 0, dp(14));
+        intro.setPadding(0, dp(3), 0, dp(10));
+
+        Spinner providerSelector = new Spinner(this);
+        ArrayList<String> providerLabels = new ArrayList<>();
+        providerLabels.add("Wszystkie źródła");
+        for (OnlineProvider provider : providers) providerLabels.add(provider.name());
+        ArrayAdapter<String> providerAdapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                providerLabels
+        );
+        providerSelector.setAdapter(providerAdapter);
+        providerSelector.setPadding(0, 0, 0, dp(10));
+        providerSelector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                selectedProviderId = position == 0
+                        ? ALL_PROVIDERS
+                        : providers.get(position - 1).id();
+                if (results != null && search != null) {
+                    filter(search.getText() == null ? "" : search.getText().toString());
+                }
+            }
+
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
 
         search = new EditText(this);
         search.setHint("Tytuł lub autor");
@@ -144,20 +167,23 @@ public class WolneLekturyActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView attribution = new TextView(this);
-        attribution.setText("Katalog i pliki: Wolne Lektury");
+        attribution.setText("Źródła: Wolne Lektury");
         attribution.setTextColor(Color.rgb(105, 125, 113));
         attribution.setTextSize(12);
         attribution.setGravity(Gravity.CENTER);
         attribution.setPadding(0, dp(10), 0, 0);
         attribution.setOnClickListener(v -> {
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://wolnelektury.pl/")));
+                if (!providers.isEmpty()) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(providers.get(0).attributionUrl())));
+                }
             } catch (Exception ignored) {}
         });
 
         root.addView(back);
         root.addView(title);
         root.addView(intro);
+        root.addView(providerSelector);
         root.addView(search);
         root.addView(loading);
         root.addView(scroll, new LinearLayout.LayoutParams(
@@ -169,35 +195,36 @@ public class WolneLekturyActivity extends Activity {
 
     private void loadCatalog() {
         executor.execute(() -> {
-            try {
-                JSONArray data = new JSONArray(getText(API_BOOKS));
-                ArrayList<CatalogBook> loaded = new ArrayList<>();
-                for (int i = 0; i < data.length(); i++) {
-                    JSONObject item = data.optJSONObject(i);
-                    if (item == null) continue;
-                    String title = item.optString("title", "").trim();
-                    String author = item.optString("author", "").trim();
-                    String href = item.optString("href", "").trim();
-                    String sourceUrl = item.optString("url", "").trim();
-                    String coverUrl = item.optString("cover", "").trim();
-                    if (title.isEmpty() || href.isEmpty()) continue;
-                    loaded.add(new CatalogBook(title, author, href, sourceUrl, coverUrl));
+            ArrayList<OnlineProvider.Book> loaded = new ArrayList<>();
+            ArrayList<String> errors = new ArrayList<>();
+
+            for (OnlineProvider provider : providers) {
+                try {
+                    loaded.addAll(provider.loadCatalog());
+                } catch (Exception e) {
+                    errors.add(provider.name());
                 }
-                runOnUiThread(() -> {
-                    catalog.clear();
-                    catalog.addAll(loaded);
-                    progress.setVisibility(View.GONE);
-                    status.setText("Katalog: " + catalog.size() + " utworów");
-                    search.setEnabled(true);
-                    filter("");
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    progress.setVisibility(View.GONE);
-                    status.setText("Nie udało się pobrać katalogu");
-                    Toast.makeText(this, "Wolne Lektury: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                });
             }
+
+            runOnUiThread(() -> {
+                catalog.clear();
+                catalog.addAll(loaded);
+                progress.setVisibility(View.GONE);
+
+                if (catalog.isEmpty() && !errors.isEmpty()) {
+                    status.setText("Nie udało się pobrać katalogu");
+                    Toast.makeText(
+                            this,
+                            "Nie udało się pobrać: " + String.join(", ", errors),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+
+                status.setText("Katalog: " + catalog.size() + " utworów");
+                search.setEnabled(true);
+                filter("");
+            });
         });
     }
 
@@ -221,7 +248,8 @@ public class WolneLekturyActivity extends Activity {
         if (catalog.isEmpty()) return;
 
         int shown = 0;
-        for (CatalogBook book : catalog) {
+        for (OnlineProvider.Book book : catalog) {
+            if (!providerSelected(book.providerId)) continue;
             String haystack = normalize(book.title + " " + book.author);
             if (!haystack.contains(needle)) continue;
             addResult(book);
@@ -243,7 +271,7 @@ public class WolneLekturyActivity extends Activity {
         List<OnlineLibrary.Entry> entries = OnlineLibrary.load(this);
         ArrayList<OnlineLibrary.Entry> visible = new ArrayList<>();
         for (OnlineLibrary.Entry entry : entries) {
-            if (!SOURCE.equals(entry.provider)) continue;
+            if (!providerNameSelected(entry.provider)) continue;
             if (!needle.isEmpty()) {
                 String haystack = normalize(entry.title + " " + entry.author);
                 if (!haystack.contains(needle)) continue;
@@ -303,13 +331,13 @@ public class WolneLekturyActivity extends Activity {
         title.setMaxLines(2);
 
         TextView author = new TextView(this);
-        author.setText(entry.author.isEmpty() ? SOURCE : entry.author);
+        author.setText(entry.author.isEmpty() ? entry.provider : entry.author);
         author.setTextColor(Color.rgb(150, 150, 150));
         author.setTextSize(13);
         author.setPadding(0, dp(3), 0, 0);
 
         TextView source = new TextView(this);
-        source.setText("Pobrane · " + SOURCE);
+        source.setText("Pobrane · " + entry.provider);
         source.setTextColor(Color.rgb(99, 145, 116));
         source.setTextSize(12);
         source.setPadding(0, dp(5), 0, 0);
@@ -423,7 +451,7 @@ public class WolneLekturyActivity extends Activity {
         startActivity(intent);
     }
 
-    private void addResult(CatalogBook book) {
+    private void addResult(OnlineProvider.Book book) {
         OnlineLibrary.Entry downloaded = findDownloaded(book);
 
         LinearLayout row = new LinearLayout(this);
@@ -447,13 +475,13 @@ public class WolneLekturyActivity extends Activity {
         title.setMaxLines(2);
 
         TextView author = new TextView(this);
-        author.setText(book.author.isEmpty() ? SOURCE : book.author);
+        author.setText(book.author.isEmpty() ? book.providerName : book.author);
         author.setTextColor(Color.rgb(150, 150, 150));
         author.setTextSize(13);
         author.setPadding(0, dp(3), 0, 0);
 
         TextView source = new TextView(this);
-        source.setText(SOURCE + " · EPUB");
+        source.setText(book.providerName + " · EPUB");
         source.setTextColor(Color.rgb(99, 145, 116));
         source.setTextSize(12);
         source.setPadding(0, dp(5), 0, 0);
@@ -485,9 +513,9 @@ public class WolneLekturyActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
     }
 
-    private OnlineLibrary.Entry findDownloaded(CatalogBook book) {
+    private OnlineLibrary.Entry findDownloaded(OnlineProvider.Book book) {
         for (OnlineLibrary.Entry entry : OnlineLibrary.load(this)) {
-            if (SOURCE.equals(entry.provider) && !book.sourceUrl.isEmpty()
+            if (book.providerName.equals(entry.provider) && !book.sourceUrl.isEmpty()
                     && book.sourceUrl.equals(entry.sourceUrl)) {
                 return entry;
             }
@@ -495,7 +523,7 @@ public class WolneLekturyActivity extends Activity {
         return null;
     }
 
-    private void downloadBook(CatalogBook book, Button action) {
+    private void downloadBook(OnlineProvider.Book book, Button action) {
         action.setEnabled(false);
         action.setText("Pobieranie…");
         progress.setVisibility(View.VISIBLE);
@@ -503,29 +531,26 @@ public class WolneLekturyActivity extends Activity {
 
         executor.execute(() -> {
             try {
-                JSONObject detail = new JSONObject(getText(withJsonFormat(book.href)));
-                String epub = detail.optString("epub", "").trim();
-                if (epub.isEmpty() || "null".equals(epub)) {
-                    throw new IllegalArgumentException("brak wersji EPUB");
-                }
-                epub = absoluteUrl(epub);
+                OnlineProvider provider = providerById(book.providerId);
+                if (provider == null) throw new IllegalStateException("nieznane źródło");
 
-                String coverUrl = book.coverUrl;
-                if (coverUrl.isEmpty()) coverUrl = detail.optString("cover", "").trim();
-                if (!coverUrl.isEmpty()) coverUrl = absoluteUrl(coverUrl);
+                OnlineProvider.Download resolved = provider.resolveDownload(book);
+                String epub = resolved.epubUrl;
+                String coverUrl = resolved.coverUrl == null ? "" : resolved.coverUrl;
 
-                File dir = OnlineLibrary.providerDirectory(this, SOURCE);
+                File dir = OnlineLibrary.providerDirectory(this, provider.id());
                 if (!dir.exists() && !dir.mkdirs()) {
                     throw new IllegalStateException("nie można utworzyć biblioteki Online");
                 }
 
-                String suffix = Integer.toHexString(book.sourceUrl.hashCode());
+                String stableId = !book.sourceUrl.isEmpty() ? book.sourceUrl : book.detailUrl;
+                String suffix = Integer.toHexString(stableId.hashCode());
                 File target = new File(dir, safeFileName(book.title) + "-" + suffix + ".epub");
                 download(epub, target);
 
                 String coverPath = "";
                 if (!coverUrl.isEmpty()) {
-                    File coverFile = new File(dir, safeFileName(book.title) + "-" + suffix + ".jpg");
+                    File coverFile = new File(dir, safeFileName(book.title) + "-" + suffix + ".cover");
                     try {
                         download(coverUrl, coverFile);
                         coverPath = coverFile.getAbsolutePath();
@@ -534,7 +559,7 @@ public class WolneLekturyActivity extends Activity {
                 }
 
                 OnlineLibrary.upsert(this, new OnlineLibrary.Entry(
-                        SOURCE,
+                        provider.name(),
                         book.title,
                         book.author,
                         book.sourceUrl,
@@ -571,7 +596,7 @@ public class WolneLekturyActivity extends Activity {
 
     private void loadCover(ImageView target, String address) {
         if (address == null || address.trim().isEmpty()) return;
-        String url = absoluteUrl(address.trim());
+        String url = address.trim();
 
         Bitmap cached = coverCache.get(url);
         if (cached != null) {
@@ -602,19 +627,6 @@ public class WolneLekturyActivity extends Activity {
         });
     }
 
-    private String getText(String address) throws Exception {
-        HttpURLConnection connection = open(address);
-        try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buffer = new byte[16 * 1024];
-            int count;
-            while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
-            return new String(out.toByteArray(), StandardCharsets.UTF_8);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
     private void download(String address, File target) throws Exception {
         HttpURLConnection connection = open(address);
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
@@ -639,15 +651,21 @@ public class WolneLekturyActivity extends Activity {
         return connection;
     }
 
-    private String withJsonFormat(String href) {
-        if (href.contains("?")) return href + "&format=json";
-        return href + "?format=json";
+    private OnlineProvider providerById(String id) {
+        for (OnlineProvider provider : providers) {
+            if (provider.id().equals(id)) return provider;
+        }
+        return null;
     }
 
-    private String absoluteUrl(String value) {
-        if (value.startsWith("http://") || value.startsWith("https://")) return value;
-        if (!value.startsWith("/")) value = "/" + value;
-        return "https://wolnelektury.pl" + value;
+    private boolean providerSelected(String providerId) {
+        return ALL_PROVIDERS.equals(selectedProviderId) || selectedProviderId.equals(providerId);
+    }
+
+    private boolean providerNameSelected(String providerName) {
+        if (ALL_PROVIDERS.equals(selectedProviderId)) return true;
+        OnlineProvider provider = providerById(selectedProviderId);
+        return provider != null && provider.name().equals(providerName);
     }
 
     private String normalize(String value) {
@@ -664,19 +682,4 @@ public class WolneLekturyActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private static class CatalogBook {
-        final String title;
-        final String author;
-        final String href;
-        final String sourceUrl;
-        final String coverUrl;
-
-        CatalogBook(String title, String author, String href, String sourceUrl, String coverUrl) {
-            this.title = title;
-            this.author = author;
-            this.href = href;
-            this.sourceUrl = sourceUrl;
-            this.coverUrl = coverUrl;
-        }
-    }
 }
