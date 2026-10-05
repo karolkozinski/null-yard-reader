@@ -11,6 +11,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class WolneLekturyProvider implements OnlineProvider {
     private static final String API_BOOKS = "https://wolnelektury.pl/api/books/?format=json";
@@ -20,23 +21,37 @@ final class WolneLekturyProvider implements OnlineProvider {
     @Override public String attributionText() { return "Katalog i pliki: Wolne Lektury"; }
     @Override public String attributionUrl() { return "https://wolnelektury.pl/"; }
 
+    private List<Book> catalog;
+
     @Override
-    public List<Book> loadCatalog() throws Exception {
-        JSONArray data = new JSONArray(getText(API_BOOKS));
+    public synchronized List<Book> search(String query) throws Exception {
+        if (catalog == null) {
+            JSONArray data = new JSONArray(getText(API_BOOKS));
+            ArrayList<Book> loaded = new ArrayList<>();
+
+            for (int i = 0; i < data.length(); i++) {
+                JSONObject item = data.optJSONObject(i);
+                if (item == null) continue;
+
+                String title = item.optString("title", "").trim();
+                String author = item.optString("author", "").trim();
+                String href = absoluteUrl(item.optString("href", "").trim());
+                String sourceUrl = absoluteUrl(item.optString("url", "").trim());
+                String coverUrl = coverUrl(item.optString("cover", "").trim());
+
+                if (title.isEmpty() || href.isEmpty()) continue;
+                loaded.add(new Book(id(), name(), title, author, "pl", href, sourceUrl, coverUrl));
+            }
+            catalog = loaded;
+        }
+
+        String needle = normalize(query);
         ArrayList<Book> result = new ArrayList<>();
-
-        for (int i = 0; i < data.length(); i++) {
-            JSONObject item = data.optJSONObject(i);
-            if (item == null) continue;
-
-            String title = item.optString("title", "").trim();
-            String author = item.optString("author", "").trim();
-            String href = absoluteUrl(item.optString("href", "").trim());
-            String sourceUrl = absoluteUrl(item.optString("url", "").trim());
-            String coverUrl = coverUrl(item.optString("cover", "").trim());
-
-            if (title.isEmpty() || href.isEmpty()) continue;
-            result.add(new Book(id(), name(), title, author, href, sourceUrl, coverUrl));
+        for (Book book : catalog) {
+            String haystack = normalize(book.title + " " + book.author);
+            if (!haystack.contains(needle)) continue;
+            result.add(book);
+            if (result.size() >= 100) break;
         }
         return result;
     }
@@ -58,6 +73,10 @@ final class WolneLekturyProvider implements OnlineProvider {
                 absoluteUrl(epub),
                 coverUrl(cover)
         );
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).trim();
     }
 
     private String getText(String address) throws Exception {
