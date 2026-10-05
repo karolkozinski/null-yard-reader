@@ -9,6 +9,8 @@ val releaseSigningProperties = Properties().apply {
 }
 
 val ciSigningFile = rootProject.file("ci/nullreader-ci.keystore")
+val personalLibraryUrl = providers.gradleProperty("nullReaderPersonalUrl").orNull ?: ""
+val personalLibraryToken = providers.gradleProperty("nullReaderPersonalToken").orNull ?: ""
 
 plugins {
     alias(libs.plugins.android.application)
@@ -22,8 +24,14 @@ android {
         applicationId = "com.nullyard.reader"
         minSdk = 28
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.3-beta4"
+        versionCode = 8
+        versionName = "0.3-beta5"
+        buildConfigField("String", "PERSONAL_LIBRARY_URL", "\"$personalLibraryUrl\"")
+        buildConfigField("String", "PERSONAL_LIBRARY_TOKEN", "\"$personalLibraryToken\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
