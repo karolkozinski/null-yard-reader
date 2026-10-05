@@ -65,6 +65,7 @@ final class WikisourceProvider implements OnlineProvider {
                     title,
                     "",
                     "pl",
+                    "EPUB",
                     title,
                     sourceUrl,
                     coverUrl
