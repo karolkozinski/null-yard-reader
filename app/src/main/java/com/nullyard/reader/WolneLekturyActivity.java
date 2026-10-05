@@ -67,6 +67,13 @@ public class WolneLekturyActivity extends Activity {
         providers.add(new WolneLekturyProvider());
         providers.add(new WikisourceProvider());
         providers.add(new FbcProvider());
+        if (!BuildConfig.PERSONAL_LIBRARY_URL.isEmpty()
+                && !BuildConfig.PERSONAL_LIBRARY_TOKEN.isEmpty()) {
+            providers.add(new PersonalLibraryProvider(
+                    BuildConfig.PERSONAL_LIBRARY_URL,
+                    BuildConfig.PERSONAL_LIBRARY_TOKEN
+            ));
+        }
         showCatalog();
     }
 
@@ -486,7 +493,7 @@ public class WolneLekturyActivity extends Activity {
 
         ImageView cover = coverView();
         cover.setImageBitmap(generatedCover(book.title, book.author));
-        loadCover(cover, book.coverUrl);
+        loadCover(cover, book.coverUrl, book.providerId);
 
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
@@ -587,13 +594,13 @@ public class WolneLekturyActivity extends Activity {
                 String stableId = !book.sourceUrl.isEmpty() ? book.sourceUrl : book.detailUrl;
                 String suffix = Integer.toHexString(stableId.hashCode());
                 File target = new File(dir, safeFileName(book.title) + "-" + suffix + ".epub");
-                download(epub, target);
+                download(epub, target, provider);
 
                 String coverPath = "";
                 if (!coverUrl.isEmpty()) {
                     File coverFile = new File(dir, safeFileName(book.title) + "-" + suffix + ".cover");
                     try {
-                        download(coverUrl, coverFile);
+                        download(coverUrl, coverFile, provider);
                         coverPath = coverFile.getAbsolutePath();
                     } catch (Exception ignored) {
                     }
@@ -732,9 +739,10 @@ public class WolneLekturyActivity extends Activity {
         return cover;
     }
 
-    private void loadCover(ImageView target, String address) {
+    private void loadCover(ImageView target, String address, String providerId) {
         if (address == null || address.trim().isEmpty()) return;
         String url = address.trim();
+        OnlineProvider provider = providerById(providerId);
 
         Bitmap cached = coverCache.get(url);
         if (cached != null) {
@@ -746,7 +754,7 @@ public class WolneLekturyActivity extends Activity {
         imageExecutor.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = open(url);
+                connection = open(url, provider);
                 Bitmap bitmap;
                 try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
                     bitmap = BitmapFactory.decodeStream(input);
@@ -765,8 +773,8 @@ public class WolneLekturyActivity extends Activity {
         });
     }
 
-    private void download(String address, File target) throws Exception {
-        HttpURLConnection connection = open(address);
+    private void download(String address, File target, OnlineProvider provider) throws Exception {
+        HttpURLConnection connection = open(address, provider);
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
              FileOutputStream output = new FileOutputStream(target)) {
             byte[] buffer = new byte[32 * 1024];
@@ -777,13 +785,14 @@ public class WolneLekturyActivity extends Activity {
         }
     }
 
-    private HttpURLConnection open(String address) throws Exception {
+    private HttpURLConnection open(String address, OnlineProvider provider) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(60000);
         connection.setInstanceFollowRedirects(true);
         connection.setRequestProperty("User-Agent", "NullReader/0.3 (https://nullreader.nullyard.com)");
         connection.setRequestProperty("Accept", "application/json, application/epub+zip, */*");
+        if (provider != null) provider.configureConnection(connection);
         int code = connection.getResponseCode();
         if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
         return connection;
@@ -797,7 +806,10 @@ public class WolneLekturyActivity extends Activity {
     }
 
     private boolean providerSelected(String providerId) {
-        return ALL_PROVIDERS.equals(selectedProviderId) || selectedProviderId.equals(providerId);
+        if (selectedProviderId.equals(providerId)) return true;
+        if (!ALL_PROVIDERS.equals(selectedProviderId)) return false;
+        OnlineProvider provider = providerById(providerId);
+        return provider != null && provider.includeInAllSearch();
     }
 
     private boolean providerNameSelected(String providerName) {
