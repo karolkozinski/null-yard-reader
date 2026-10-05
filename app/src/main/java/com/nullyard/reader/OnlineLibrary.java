@@ -91,6 +91,25 @@ final class OnlineLibrary {
         return result;
     }
 
+    static synchronized void remove(Context context, Entry entry) throws Exception {
+        List<Entry> entries = load(context);
+        ArrayList<Entry> updated = new ArrayList<>();
+
+        for (Entry existing : entries) {
+            if (!sameBook(existing, entry)) updated.add(existing);
+        }
+
+        File epub = new File(entry.path);
+        if (epub.isFile()) epub.delete();
+
+        if (entry.coverPath != null && !entry.coverPath.isEmpty()) {
+            File cover = new File(entry.coverPath);
+            if (cover.isFile()) cover.delete();
+        }
+
+        save(context, updated);
+    }
+
     static synchronized void upsert(Context context, Entry entry) throws Exception {
         List<Entry> entries = load(context);
         ArrayList<Entry> updated = new ArrayList<>();
