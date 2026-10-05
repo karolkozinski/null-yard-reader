@@ -9,6 +9,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -47,6 +49,9 @@ public class WolneLekturyActivity extends Activity {
     private final Map<String, Bitmap> coverCache = new HashMap<>();
     private final ArrayList<OnlineProvider> providers = new ArrayList<>();
     private final ArrayList<OnlineProvider.Book> catalog = new ArrayList<>();
+    private final Handler searchHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingSearch;
+    private int searchGeneration = 0;
     private String selectedProviderId = ALL_PROVIDERS;
     private LinearLayout results;
     private EditText search;
@@ -57,8 +62,8 @@ public class WolneLekturyActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         providers.add(new WolneLekturyProvider());
+        providers.add(new WikisourceProvider());
         showCatalog();
-        loadCatalog();
     }
 
     @Override
@@ -71,6 +76,7 @@ public class WolneLekturyActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
         executor.shutdownNow();
         imageExecutor.shutdownNow();
         super.onDestroy();
@@ -124,7 +130,7 @@ public class WolneLekturyActivity extends Activity {
                         ? ALL_PROVIDERS
                         : providers.get(position - 1).id();
                 if (results != null && search != null) {
-                    filter(search.getText() == null ? "" : search.getText().toString());
+                    scheduleSearch(search.getText() == null ? "" : search.getText().toString());
                 }
             }
 
@@ -138,11 +144,11 @@ public class WolneLekturyActivity extends Activity {
         search.setHintTextColor(Color.rgb(125, 125, 125));
         search.setBackgroundColor(Color.rgb(30, 35, 32));
         search.setPadding(dp(14), dp(10), dp(14), dp(10));
-        search.setEnabled(false);
+        search.setEnabled(true);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                filter(s == null ? "" : s.toString());
+                scheduleSearch(s == null ? "" : s.toString());
             }
             @Override public void afterTextChanged(Editable s) {}
         });
@@ -153,7 +159,7 @@ public class WolneLekturyActivity extends Activity {
 
         progress = new ProgressBar(this);
         status = new TextView(this);
-        status.setText("Pobieram katalog…");
+        status.setText("Wpisz tytuł lub autora");
         status.setTextColor(Color.rgb(145, 145, 145));
         status.setTextSize(13);
         status.setPadding(dp(10), 0, 0, 0);
@@ -167,7 +173,7 @@ public class WolneLekturyActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView attribution = new TextView(this);
-        attribution.setText("Źródła: Wolne Lektury");
+        attribution.setText("Źródła: Wolne Lektury · Wikiźródła");
         attribution.setTextColor(Color.rgb(105, 125, 113));
         attribution.setTextSize(12);
         attribution.setGravity(Gravity.CENTER);
@@ -193,37 +199,51 @@ public class WolneLekturyActivity extends Activity {
         root.requestApplyInsets();
     }
 
-    private void loadCatalog() {
+    private void scheduleSearch(String query) {
+        if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
+
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isEmpty()) {
+            searchGeneration++;
+            catalog.clear();
+            progress.setVisibility(View.GONE);
+            status.setText("Wpisz tytuł lub autora");
+            filter("");
+            return;
+        }
+
+        final int generation = ++searchGeneration;
+        pendingSearch = () -> searchProviders(trimmed, generation);
+        searchHandler.postDelayed(pendingSearch, 350);
+    }
+
+    private void searchProviders(String query, int generation) {
+        progress.setVisibility(View.VISIBLE);
+        status.setText("Szukam…");
+
         executor.execute(() -> {
-            ArrayList<OnlineProvider.Book> loaded = new ArrayList<>();
+            ArrayList<OnlineProvider.Book> found = new ArrayList<>();
             ArrayList<String> errors = new ArrayList<>();
 
             for (OnlineProvider provider : providers) {
+                if (!providerSelected(provider.id())) continue;
                 try {
-                    loaded.addAll(provider.loadCatalog());
+                    found.addAll(provider.search(query));
                 } catch (Exception e) {
                     errors.add(provider.name());
                 }
             }
 
             runOnUiThread(() -> {
+                if (generation != searchGeneration) return;
+
                 catalog.clear();
-                catalog.addAll(loaded);
+                catalog.addAll(found);
                 progress.setVisibility(View.GONE);
-
-                if (catalog.isEmpty() && !errors.isEmpty()) {
-                    status.setText("Nie udało się pobrać katalogu");
-                    Toast.makeText(
-                            this,
-                            "Nie udało się pobrać: " + String.join(", ", errors),
-                            Toast.LENGTH_LONG
-                    ).show();
-                    return;
-                }
-
-                status.setText("Katalog: " + catalog.size() + " utworów");
-                search.setEnabled(true);
-                filter("");
+                status.setText(errors.isEmpty()
+                        ? "Znaleziono: " + catalog.size()
+                        : "Znaleziono: " + catalog.size() + " · problem: " + String.join(", ", errors));
+                filter(query);
             });
         });
     }
@@ -250,8 +270,6 @@ public class WolneLekturyActivity extends Activity {
         int shown = 0;
         for (OnlineProvider.Book book : catalog) {
             if (!providerSelected(book.providerId)) continue;
-            String haystack = normalize(book.title + " " + book.author);
-            if (!haystack.contains(needle)) continue;
             addResult(book);
             shown++;
             if (shown >= 100) break;
@@ -337,7 +355,7 @@ public class WolneLekturyActivity extends Activity {
         author.setPadding(0, dp(3), 0, 0);
 
         TextView source = new TextView(this);
-        source.setText("Pobrane · " + entry.provider);
+        source.setText("Pobrane · " + entry.provider + " · " + languageLabel(entry.language));
         source.setTextColor(Color.rgb(99, 145, 116));
         source.setTextSize(12);
         source.setPadding(0, dp(5), 0, 0);
@@ -421,7 +439,8 @@ public class WolneLekturyActivity extends Activity {
                         entry.sourceUrl,
                         entry.path,
                         entry.coverUrl,
-                        coverFile.getAbsolutePath()
+                        coverFile.getAbsolutePath(),
+                        entry.language
                 );
                 OnlineLibrary.upsert(this, updated);
 
@@ -481,7 +500,7 @@ public class WolneLekturyActivity extends Activity {
         author.setPadding(0, dp(3), 0, 0);
 
         TextView source = new TextView(this);
-        source.setText(book.providerName + " · EPUB");
+        source.setText(book.providerName + " · " + languageLabel(book.language) + " · EPUB");
         source.setTextColor(Color.rgb(99, 145, 116));
         source.setTextSize(12);
         source.setPadding(0, dp(5), 0, 0);
@@ -565,7 +584,8 @@ public class WolneLekturyActivity extends Activity {
                         book.sourceUrl,
                         target.getAbsolutePath(),
                         coverUrl,
-                        coverPath
+                        coverPath,
+                        book.language
                 ));
 
                 runOnUiThread(() -> {
@@ -642,7 +662,7 @@ public class WolneLekturyActivity extends Activity {
     private HttpURLConnection open(String address) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setConnectTimeout(12000);
-        connection.setReadTimeout(30000);
+        connection.setReadTimeout(60000);
         connection.setInstanceFollowRedirects(true);
         connection.setRequestProperty("User-Agent", "NullReader/0.3 (https://nullreader.nullyard.com)");
         connection.setRequestProperty("Accept", "application/json, application/epub+zip, */*");
@@ -666,6 +686,13 @@ public class WolneLekturyActivity extends Activity {
         if (ALL_PROVIDERS.equals(selectedProviderId)) return true;
         OnlineProvider provider = providerById(selectedProviderId);
         return provider != null && provider.name().equals(providerName);
+    }
+
+    private String languageLabel(String code) {
+        if (code == null || code.trim().isEmpty()) return "—";
+        String value = code.trim().toLowerCase(Locale.ROOT);
+        if ("pl".equals(value)) return "PL";
+        return value.toUpperCase(Locale.ROOT);
     }
 
     private String normalize(String value) {
