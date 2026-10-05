@@ -40,7 +40,7 @@ final class WolneLekturyProvider implements OnlineProvider {
                 String coverUrl = coverUrl(item.optString("cover", "").trim());
 
                 if (title.isEmpty() || href.isEmpty()) continue;
-                loaded.add(new Book(id(), name(), title, author, "pl", href, sourceUrl, coverUrl));
+                loaded.add(new Book(id(), name(), title, author, "pl", "EPUB", href, sourceUrl, coverUrl));
             }
             catalog = loaded;
         }
