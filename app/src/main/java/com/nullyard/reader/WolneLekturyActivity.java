@@ -56,6 +56,14 @@ public class WolneLekturyActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (results != null && search != null) {
+            filter(search.getText() == null ? "" : search.getText().toString());
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         executor.shutdownNow();
         super.onDestroy();
@@ -80,13 +88,13 @@ public class WolneLekturyActivity extends Activity {
         back.setOnClickListener(v -> finish());
 
         TextView title = new TextView(this);
-        title.setText("Wolne Lektury");
+        title.setText("Online");
         title.setTextColor(Color.WHITE);
         title.setTextSize(28);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
 
         TextView intro = new TextView(this);
-        intro.setText("Darmowe książki z wolnelektury.pl\\nPoniżej pokazujemy przykładowe 60 pozycji. Wyszukiwarka przeszukuje cały katalog.");
+        intro.setText("Wolne Lektury · darmowe EPUB-y");
         intro.setTextColor(Color.rgb(145, 145, 145));
         intro.setTextSize(13);
         intro.setPadding(0, dp(3), 0, dp(14));
@@ -185,18 +193,30 @@ public class WolneLekturyActivity extends Activity {
 
     private void filter(String query) {
         results.removeAllViews();
+        String needle = normalize(query);
+
+        addDownloadedSection(needle);
+
+        if (needle.isEmpty()) {
+            TextView hint = new TextView(this);
+            hint.setText("Wpisz tytuł lub autora, aby przeszukać cały katalog.");
+            hint.setTextColor(Color.rgb(145, 145, 145));
+            hint.setGravity(Gravity.CENTER);
+            hint.setTextSize(14);
+            hint.setPadding(dp(12), dp(36), dp(12), dp(36));
+            results.addView(hint);
+            return;
+        }
+
         if (catalog.isEmpty()) return;
 
-        String needle = normalize(query);
         int shown = 0;
         for (CatalogBook book : catalog) {
-            if (!needle.isEmpty()) {
-                String haystack = normalize(book.title + " " + book.author);
-                if (!haystack.contains(needle)) continue;
-            }
+            String haystack = normalize(book.title + " " + book.author);
+            if (!haystack.contains(needle)) continue;
             addResult(book);
             shown++;
-            if (shown >= 60) break;
+            if (shown >= 100) break;
         }
 
         if (shown == 0) {
@@ -204,9 +224,91 @@ public class WolneLekturyActivity extends Activity {
             empty.setText("Brak wyników");
             empty.setTextColor(Color.rgb(145, 145, 145));
             empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(60), 0, 0);
+            empty.setPadding(0, dp(40), 0, dp(20));
             results.addView(empty);
         }
+    }
+
+    private void addDownloadedSection(String needle) {
+        List<OnlineLibrary.Entry> entries = OnlineLibrary.load(this);
+        ArrayList<OnlineLibrary.Entry> visible = new ArrayList<>();
+        for (OnlineLibrary.Entry entry : entries) {
+            if (!SOURCE.equals(entry.provider)) continue;
+            if (!needle.isEmpty()) {
+                String haystack = normalize(entry.title + " " + entry.author);
+                if (!haystack.contains(needle)) continue;
+            }
+            visible.add(entry);
+        }
+
+        if (visible.isEmpty()) return;
+
+        TextView heading = new TextView(this);
+        heading.setText("Pobrane");
+        heading.setTextColor(Color.rgb(190, 205, 196));
+        heading.setTextSize(14);
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        heading.setPadding(0, dp(8), 0, dp(6));
+        results.addView(heading);
+
+        for (OnlineLibrary.Entry entry : visible) addDownloadedRow(entry);
+
+        View gap = new View(this);
+        results.addView(gap, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(16)));
+    }
+
+    private void addDownloadedRow(OnlineLibrary.Entry entry) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setBackgroundColor(Color.rgb(22, 22, 22));
+        row.setOnClickListener(v -> openDownloaded(entry));
+
+        TextView title = new TextView(this);
+        title.setText(entry.title);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+
+        TextView author = new TextView(this);
+        author.setText(entry.author.isEmpty() ? SOURCE : entry.author);
+        author.setTextColor(Color.rgb(150, 150, 150));
+        author.setTextSize(13);
+        author.setPadding(0, dp(3), 0, 0);
+
+        TextView source = new TextView(this);
+        source.setText("Pobrane · " + SOURCE);
+        source.setTextColor(Color.rgb(99, 145, 116));
+        source.setTextSize(12);
+        source.setPadding(0, dp(5), 0, 0);
+
+        row.addView(title);
+        row.addView(author);
+        row.addView(source);
+        results.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(48, 48, 48));
+        results.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    }
+
+    private void openDownloaded(OnlineLibrary.Entry entry) {
+        File file = new File(entry.path);
+        if (!file.isFile()) {
+            Toast.makeText(this, "Plik nie jest już dostępny", Toast.LENGTH_SHORT).show();
+            filter(search.getText() == null ? "" : search.getText().toString());
+            return;
+        }
+
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setAction(Intent.ACTION_VIEW);
+        intent.putExtra("online_epub_path", file.getAbsolutePath());
+        intent.putExtra("online_epub_title", entry.title);
+        intent.putExtra("online_source_url", entry.sourceUrl);
+        startActivity(intent);
     }
 
     private void addResult(CatalogBook book) {
@@ -260,13 +362,22 @@ public class WolneLekturyActivity extends Activity {
                 }
                 epub = absoluteUrl(epub);
 
-                File dir = new File(getCacheDir(), "wolne-lektury");
+                File dir = OnlineLibrary.providerDirectory(this, SOURCE);
                 if (!dir.exists() && !dir.mkdirs()) {
-                    throw new IllegalStateException("nie można utworzyć cache");
+                    throw new IllegalStateException("nie można utworzyć biblioteki Online");
                 }
-                String fileName = safeFileName(book.title) + ".epub";
+                String suffix = Integer.toHexString(book.sourceUrl.hashCode());
+                String fileName = safeFileName(book.title) + "-" + suffix + ".epub";
                 File target = new File(dir, fileName);
                 download(epub, target);
+
+                OnlineLibrary.upsert(this, new OnlineLibrary.Entry(
+                        SOURCE,
+                        book.title,
+                        book.author,
+                        book.sourceUrl,
+                        target.getAbsolutePath()
+                ));
 
                 Intent intent = new Intent(this, MainActivity.class);
                 intent.setAction(Intent.ACTION_VIEW);
