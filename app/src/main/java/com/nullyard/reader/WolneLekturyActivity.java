@@ -6,6 +6,9 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -326,6 +329,7 @@ public class WolneLekturyActivity extends Activity {
         });
 
         ImageView cover = coverView();
+        cover.setImageBitmap(generatedCover(entry.title, entry.author));
         if (!entry.coverPath.isEmpty()) {
             Bitmap bitmap = BitmapFactory.decodeFile(entry.coverPath);
             if (bitmap != null) {
@@ -480,6 +484,7 @@ public class WolneLekturyActivity extends Activity {
         row.setBackgroundColor(Color.rgb(22, 22, 22));
 
         ImageView cover = coverView();
+        cover.setImageBitmap(generatedCover(book.title, book.author));
         loadCover(cover, book.coverUrl);
 
         LinearLayout info = new LinearLayout(this);
@@ -605,6 +610,102 @@ public class WolneLekturyActivity extends Activity {
                 });
             }
         });
+    }
+
+    private Bitmap generatedCover(String title, String author) {
+        int width = 360;
+        int height = 540;
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+
+        int[] backgrounds = new int[] {
+                Color.rgb(31, 34, 36),
+                Color.rgb(56, 61, 51),
+                Color.rgb(36, 45, 56),
+                Color.rgb(87, 75, 58)
+        };
+        String safeTitle = title == null ? "" : title.trim();
+        int index = Math.floorMod(safeTitle.hashCode(), backgrounds.length);
+        canvas.drawColor(backgrounds[index]);
+
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.rgb(226, 216, 190));
+        paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        paint.setTextSize(24);
+        canvas.drawText("NULL YARD", 30, 48, paint);
+
+        String initial = coverInitial(safeTitle);
+        paint.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
+        paint.setTextSize(170);
+        float initialWidth = paint.measureText(initial);
+        canvas.drawText(initial, (width - initialWidth) / 2.0f, 285, paint);
+
+        paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        paint.setTextSize(29);
+        drawCoverText(canvas, paint, safeTitle, 30, 390, width - 60, 2);
+
+        if (author != null && !author.trim().isEmpty()) {
+            paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.NORMAL));
+            paint.setTextSize(21);
+            paint.setAlpha(190);
+            drawCoverText(canvas, paint, author.trim(), 30, 485, width - 60, 1);
+        }
+
+        paint.setAlpha(255);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2);
+        paint.setColor(Color.argb(100, 226, 216, 190));
+        canvas.drawRoundRect(new RectF(12, 12, width - 12, height - 12), 10, 10, paint);
+
+        return bitmap;
+    }
+
+    private String coverInitial(String title) {
+        if (title == null) return "N";
+        for (int i = 0; i < title.length(); i++) {
+            char c = title.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                return String.valueOf(Character.toUpperCase(c));
+            }
+        }
+        return "N";
+    }
+
+    private void drawCoverText(
+            Canvas canvas,
+            Paint paint,
+            String text,
+            float x,
+            float y,
+            float maxWidth,
+            int maxLines
+    ) {
+        if (text == null || text.trim().isEmpty()) return;
+        String[] words = text.trim().split("\\s+");
+        StringBuilder line = new StringBuilder();
+        int lineCount = 0;
+        float lineHeight = paint.getTextSize() * 1.18f;
+
+        for (String word : words) {
+            String candidate = line.length() == 0 ? word : line + " " + word;
+            if (paint.measureText(candidate) <= maxWidth) {
+                line.setLength(0);
+                line.append(candidate);
+                continue;
+            }
+
+            if (line.length() > 0) {
+                canvas.drawText(line.toString(), x, y + lineCount * lineHeight, paint);
+                lineCount++;
+                if (lineCount >= maxLines) return;
+            }
+            line.setLength(0);
+            line.append(word);
+        }
+
+        if (line.length() > 0 && lineCount < maxLines) {
+            canvas.drawText(line.toString(), x, y + lineCount * lineHeight, paint);
+        }
     }
 
     private ImageView coverView() {
