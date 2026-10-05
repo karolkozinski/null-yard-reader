@@ -66,6 +66,7 @@ public class WolneLekturyActivity extends Activity {
         super.onCreate(state);
         providers.add(new WolneLekturyProvider());
         providers.add(new WikisourceProvider());
+        providers.add(new FbcProvider());
         showCatalog();
     }
 
@@ -176,7 +177,7 @@ public class WolneLekturyActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView attribution = new TextView(this);
-        attribution.setText("Źródła: Wolne Lektury · Wikiźródła");
+        attribution.setText("Źródła: Wolne Lektury · Wikiźródła · FBC");
         attribution.setTextColor(Color.rgb(105, 125, 113));
         attribution.setTextSize(12);
         attribution.setGravity(Gravity.CENTER);
@@ -505,7 +506,7 @@ public class WolneLekturyActivity extends Activity {
         author.setPadding(0, dp(3), 0, 0);
 
         TextView source = new TextView(this);
-        source.setText(book.providerName + " · " + languageLabel(book.language) + " · EPUB");
+        source.setText(book.providerName + " · " + languageLabel(book.language) + " · " + book.format);
         source.setTextColor(Color.rgb(99, 145, 116));
         source.setTextSize(12);
         source.setPadding(0, dp(5), 0, 0);
@@ -516,9 +517,13 @@ public class WolneLekturyActivity extends Activity {
 
         Button action = new Button(this);
         action.setAllCaps(false);
+        OnlineProvider provider = providerById(book.providerId);
         if (downloaded != null) {
             action.setText("Czytaj");
             action.setOnClickListener(v -> openDownloaded(downloaded));
+        } else if (provider != null && !provider.canDownload(book)) {
+            action.setText("Źródło");
+            action.setOnClickListener(v -> openSource(book));
         } else {
             action.setText("Pobierz");
             action.setOnClickListener(v -> downloadBook(book, action));
@@ -535,6 +540,18 @@ public class WolneLekturyActivity extends Activity {
         divider.setBackgroundColor(Color.rgb(48, 48, 48));
         results.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    }
+
+    private void openSource(OnlineProvider.Book book) {
+        if (book.sourceUrl == null || book.sourceUrl.trim().isEmpty()) {
+            Toast.makeText(this, "Brak linku do źródła", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(book.sourceUrl)));
+        } catch (Exception e) {
+            Toast.makeText(this, "Nie udało się otworzyć źródła", Toast.LENGTH_LONG).show();
+        }
     }
 
     private OnlineLibrary.Entry findDownloaded(OnlineProvider.Book book) {
