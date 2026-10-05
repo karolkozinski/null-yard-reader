@@ -33,7 +33,7 @@ final class WolneLekturyProvider implements OnlineProvider {
             String author = item.optString("author", "").trim();
             String href = absoluteUrl(item.optString("href", "").trim());
             String sourceUrl = absoluteUrl(item.optString("url", "").trim());
-            String coverUrl = absoluteUrl(item.optString("cover", "").trim());
+            String coverUrl = coverUrl(item.optString("cover", "").trim());
 
             if (title.isEmpty() || href.isEmpty()) continue;
             result.add(new Book(id(), name(), title, author, href, sourceUrl, coverUrl));
@@ -56,7 +56,7 @@ final class WolneLekturyProvider implements OnlineProvider {
 
         return new Download(
                 absoluteUrl(epub),
-                absoluteUrl(cover)
+                coverUrl(cover)
         );
     }
 
@@ -88,6 +88,16 @@ final class WolneLekturyProvider implements OnlineProvider {
     private String withJsonFormat(String href) {
         if (href.contains("?")) return href + "&format=json";
         return href + "?format=json";
+    }
+
+    private String coverUrl(String value) {
+        if (value == null || value.trim().isEmpty()) return "";
+        value = value.trim();
+        if (value.startsWith("http://") || value.startsWith("https://")) return value;
+        if (value.startsWith("/media/")) return "https://wolnelektury.pl" + value;
+        if (value.startsWith("media/")) return "https://wolnelektury.pl/" + value;
+        if (value.startsWith("/")) value = value.substring(1);
+        return "https://wolnelektury.pl/media/" + value;
     }
 
     private String absoluteUrl(String value) {
