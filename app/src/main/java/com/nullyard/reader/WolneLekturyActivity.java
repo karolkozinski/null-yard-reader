@@ -1,6 +1,7 @@
 package com.nullyard.reader;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Bitmap;
@@ -273,11 +274,21 @@ public class WolneLekturyActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(10), dp(10), dp(10), dp(10));
         row.setBackgroundColor(Color.rgb(22, 22, 22));
+        row.setOnLongClickListener(v -> {
+            confirmRemove(entry);
+            return true;
+        });
 
         ImageView cover = coverView();
         if (!entry.coverPath.isEmpty()) {
             Bitmap bitmap = BitmapFactory.decodeFile(entry.coverPath);
-            if (bitmap != null) cover.setImageBitmap(bitmap);
+            if (bitmap != null) {
+                cover.setImageBitmap(bitmap);
+            } else {
+                ensureStoredCover(entry, cover);
+            }
+        } else {
+            ensureStoredCover(entry, cover);
         }
 
         LinearLayout info = new LinearLayout(this);
@@ -337,6 +348,63 @@ public class WolneLekturyActivity extends Activity {
         String uri = Uri.fromFile(new File(entry.path)).toString();
         return getSharedPreferences("reader_state", MODE_PRIVATE)
                 .getInt("progress:" + uri, -1);
+    }
+
+    private void confirmRemove(OnlineLibrary.Entry entry) {
+        new AlertDialog.Builder(this)
+                .setTitle("Usuń pobraną książkę?")
+                .setMessage("„" + entry.title + "” zostanie usunięta z pamięci Null Readera.")
+                .setNegativeButton("Anuluj", null)
+                .setPositiveButton("Usuń", (dialog, which) -> {
+                    try {
+                        OnlineLibrary.remove(this, entry);
+                        filter(search.getText() == null ? "" : search.getText().toString());
+                        Toast.makeText(this, "Usunięto książkę", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Nie udało się usunąć książki: " + e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .show();
+    }
+
+    private void ensureStoredCover(OnlineLibrary.Entry entry, ImageView target) {
+        imageExecutor.execute(() -> {
+            try {
+                File epub = new File(entry.path);
+                if (!epub.isFile()) return;
+
+                MainActivity.EpubMetadata metadata = MainActivity.EpubReader.readMetadata(
+                        this,
+                        Uri.fromFile(epub),
+                        entry.title
+                );
+                if (metadata.coverData == null || metadata.coverData.length == 0) return;
+
+                File coverFile = new File(epub.getParentFile(), epub.getName() + ".cover");
+                try (FileOutputStream output = new FileOutputStream(coverFile)) {
+                    output.write(metadata.coverData);
+                }
+
+                OnlineLibrary.Entry updated = new OnlineLibrary.Entry(
+                        entry.provider,
+                        entry.title,
+                        entry.author,
+                        entry.sourceUrl,
+                        entry.path,
+                        entry.coverUrl,
+                        coverFile.getAbsolutePath()
+                );
+                OnlineLibrary.upsert(this, updated);
+
+                Bitmap bitmap = BitmapFactory.decodeByteArray(
+                        metadata.coverData, 0, metadata.coverData.length);
+                if (bitmap == null) return;
+
+                runOnUiThread(() -> target.setImageBitmap(bitmap));
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     private void openDownloaded(OnlineLibrary.Entry entry) {
