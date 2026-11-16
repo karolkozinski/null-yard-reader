@@ -24,13 +24,13 @@ import android.os.Looper;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
-import android.util.Base64;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -39,6 +39,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -57,6 +58,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -70,6 +72,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 public class MainActivity extends Activity {
     private static final int PICK_BOOK = 1001;
+    private static final String EPUB_RESOURCE_PREFIX = "https://local.nullyard.invalid/epub-resource/";
     private static final String PREFS = "reader_state";
     private static final String PREF_LIBRARY = "library_uris";
     private static final String PREF_THEME = "reading_theme";
@@ -84,6 +87,9 @@ public class MainActivity extends Activity {
     private Book currentBook;
     private ReaderWebView currentWebView;
     private String currentRawHtml;
+    private volatile Map<String, byte[]> currentEpubImages = Collections.emptyMap();
+    private int epubLoadGeneration = 0;
+    private boolean epubLoading = false;
     private ViewGroup currentReaderRoot;
     private LinearLayout currentReaderHeader;
     private TextView currentReaderTitle;
@@ -179,6 +185,9 @@ public class MainActivity extends Activity {
     }
 
     private void showLibrary() {
+        epubLoadGeneration++;
+        epubLoading = false;
+        currentEpubImages = Collections.emptyMap();
         if (readerOpen) saveReadingPosition();
         readerOpen = false;
         currentBook = null;
@@ -626,11 +635,30 @@ public class MainActivity extends Activity {
     }
 
     private void openBook(Book book) {
+        int requestId = ++epubLoadGeneration;
+        epubLoading = false;
         String type = bookType(book);
 
         try {
             if ("EPUB".equals(type)) {
-                showReader(book, EpubReader.read(this, book.uri, book.name));
+                epubLoading = true;
+                showEpubLoading(book);
+                new Thread(() -> {
+                    try {
+                        EpubDocument document = EpubReader.read(this, book.uri, book.name);
+                        runOnUiThread(() -> {
+                            if (requestId != epubLoadGeneration || isFinishing() || isDestroyed()) return;
+                            epubLoading = false;
+                            showReader(book, document.html, document.images);
+                        });
+                    } catch (Exception e) {
+                        runOnUiThread(() -> {
+                            if (requestId != epubLoadGeneration || isFinishing() || isDestroyed()) return;
+                            showLibrary();
+                            Toast.makeText(this, "Nie udało się otworzyć pliku: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        });
+                    }
+                }, "null-reader-epub-load").start();
                 return;
             }
 
@@ -646,6 +674,33 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, "Nie udało się otworzyć pliku: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void showEpubLoading(Book book) {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.rgb(18, 18, 18));
+
+        LinearLayout loading = new LinearLayout(this);
+        loading.setOrientation(LinearLayout.VERTICAL);
+        loading.setGravity(Gravity.CENTER);
+        loading.setPadding(dp(24), dp(24), dp(24), dp(24));
+
+        ProgressBar spinner = new ProgressBar(this);
+        loading.addView(spinner, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        TextView label = new TextView(this);
+        label.setText("Otwieranie: " + book.displayTitle());
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(16);
+        label.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelParams.topMargin = dp(18);
+        loading.addView(label, labelParams);
+
+        root.addView(loading, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
     }
 
     private void showPdfReader(Book book) throws Exception {
@@ -833,7 +888,27 @@ public class MainActivity extends Activity {
         }
     }
 
+    private WebResourceResponse serveEpubImage(Uri uri) {
+        if (uri == null || !"https".equals(uri.getScheme())
+                || !"local.nullyard.invalid".equals(uri.getHost())) return null;
+
+        List<String> segments = uri.getPathSegments();
+        if (segments.size() != 2 || !"epub-resource".equals(segments.get(0))) return null;
+
+        String path = segments.get(1);
+        byte[] image = currentEpubImages.get(path);
+        if (image == null) {
+            return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+        }
+        return new WebResourceResponse(EpubReader.imageMime(path), null, new ByteArrayInputStream(image));
+    }
+
     private void showReader(Book book, String html) {
+        showReader(book, html, Collections.emptyMap());
+    }
+
+    private void showReader(Book book, String html, Map<String, byte[]> epubImages) {
+        currentEpubImages = epubImages;
         readerOpen = true;
         currentBook = book;
         currentRawHtml = html;
@@ -982,6 +1057,11 @@ public class MainActivity extends Activity {
                     if (savedY > 0) view.scrollTo(0, savedY);
                     updateReaderProgress();
                 });
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return serveEpubImage(request.getUrl());
             }
 
             @Override
@@ -1220,6 +1300,22 @@ public class MainActivity extends Activity {
                         }
                     }, 80);
                 }
+
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                    return serveEpubImage(request.getUrl());
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    return handleReaderLink(view, request.getUrl());
+                }
+
+                @Override
+                @SuppressWarnings("deprecation")
+                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    return handleReaderLink(view, Uri.parse(url));
+                }
             });
 
             targetWebView.loadDataWithBaseURL(
@@ -1418,7 +1514,16 @@ public class MainActivity extends Activity {
     }
 
     private void handleBackNavigation() {
-        if (readerOpen) {
+        if (epubLoading) {
+            if (currentBookFromOnline) {
+                epubLoadGeneration++;
+                epubLoading = false;
+                currentBookFromOnline = false;
+                finish();
+            } else {
+                showLibrary();
+            }
+        } else if (readerOpen) {
             leaveReader();
         } else {
             moveTaskToBack(true);
@@ -1766,6 +1871,16 @@ public class MainActivity extends Activity {
         }
     }
 
+    static class EpubDocument {
+        final String html;
+        final Map<String, byte[]> images;
+
+        EpubDocument(String html, Map<String, byte[]> images) {
+            this.html = html;
+            this.images = Collections.unmodifiableMap(images);
+        }
+    }
+
     static class EpubMetadata {
         final String title;
         final String author;
@@ -1943,7 +2058,7 @@ public class MainActivity extends Activity {
             );
         }
 
-        static String read(Activity activity, Uri uri, String fallbackTitle) throws Exception {
+        static EpubDocument read(Activity activity, Uri uri, String fallbackTitle) throws Exception {
             Map<String, byte[]> entries = unzip(activity.getContentResolver().openInputStream(uri));
 
             byte[] containerBytes = entries.get("META-INF/container.xml");
@@ -1991,6 +2106,7 @@ public class MainActivity extends Activity {
 
             String title = metadataTitle(opf, fallbackTitle);
             StringBuilder content = new StringBuilder();
+            Map<String, byte[]> images = new HashMap<>();
 
             for (String path : spine) {
                 byte[] chapterBytes = entries.get(path);
@@ -1999,7 +2115,7 @@ public class MainActivity extends Activity {
                 String chapter = new String(chapterBytes, StandardCharsets.UTF_8);
                 String body = bodyOf(chapter);
                 body = removeScripts(body);
-                body = inlineImages(body, parent(path), entries);
+                body = rewriteImages(body, parent(path), entries, images);
                 body = rewriteElementAnchors(body, path);
                 body = rewriteLinks(body, path);
                 content.append("<section class=\"chapter\" id=\"")
@@ -2011,7 +2127,7 @@ public class MainActivity extends Activity {
 
             if (content.length() == 0) throw new IllegalArgumentException("nie udało się odczytać rozdziałów");
 
-            return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            String html = "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                     + "<style>"
                     + "html,body{margin:0;padding:0;background:#121212;color:#e8e8e8;max-width:100%;overflow-x:hidden;}"
                     + "*{box-sizing:border-box;}"
@@ -2023,6 +2139,7 @@ public class MainActivity extends Activity {
                     + "</style><title>" + escape(title) + "</title></head><body>"
                     + content
                     + "</body></html>";
+            return new EpubDocument(html, images);
         }
 
         private static Map<String, byte[]> unzip(InputStream input) throws Exception {
@@ -2169,10 +2286,12 @@ public class MainActivity extends Activity {
             return html.replaceAll("(?is)<script[^>]*>.*?</script>", "");
         }
 
-        private static String inlineImages(String html, String chapterDir, Map<String, byte[]> entries) {
-            html = inlineImageTags(html, chapterDir, entries, "img", "src");
-            html = inlineImageTags(html, chapterDir, entries, "image", "href");
-            html = inlineImageTags(html, chapterDir, entries, "image", "xlink:href");
+        private static String rewriteImages(
+                String html, String chapterDir, Map<String, byte[]> entries, Map<String, byte[]> images
+        ) {
+            html = rewriteImageTags(html, chapterDir, entries, images, "img", "src");
+            html = rewriteImageTags(html, chapterDir, entries, images, "image", "href");
+            html = rewriteImageTags(html, chapterDir, entries, images, "image", "xlink:href");
 
             // Embedded objects are not part of the reader surface. Leaving them in WebView
             // commonly produces Android's generic broken-resource placeholder.
@@ -2181,10 +2300,11 @@ public class MainActivity extends Activity {
             return html;
         }
 
-        private static String inlineImageTags(
+        private static String rewriteImageTags(
                 String html,
                 String chapterDir,
                 Map<String, byte[]> entries,
+                Map<String, byte[]> images,
                 String tagName,
                 String attributeName
         ) {
@@ -2208,7 +2328,7 @@ public class MainActivity extends Activity {
 
                 String src = refMatcher.group(2);
                 String lower = src.toLowerCase();
-                if (lower.startsWith("data:")) {
+                if (lower.startsWith("data:") || src.startsWith(EPUB_RESOURCE_PREFIX)) {
                     tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(tag));
                     continue;
                 }
@@ -2225,11 +2345,30 @@ public class MainActivity extends Activity {
                     continue;
                 }
 
-                String mime = imageMime(path);
-                String data = "data:" + mime + ";base64," + Base64.encodeToString(image, Base64.NO_WRAP);
+                images.put(path, image);
+                String imageUrl = EPUB_RESOURCE_PREFIX + Uri.encode(path);
                 String replaced = refMatcher.replaceFirst(java.util.regex.Matcher.quoteReplacement(
-                        refMatcher.group(1) + data + refMatcher.group(3)
+                        refMatcher.group(1) + imageUrl + refMatcher.group(3)
                 ));
+
+                if ("img".equals(tagName) && !replaced.toLowerCase(java.util.Locale.ROOT).contains("loading=")) {
+                    // Reserve the image's aspect ratio before lazy loading to avoid scroll jumps.
+                    BitmapFactory.Options size = new BitmapFactory.Options();
+                    size.inJustDecodeBounds = true;
+                    BitmapFactory.decodeByteArray(image, 0, image.length, size);
+
+                    StringBuilder attributes = new StringBuilder(" loading=\"lazy\"");
+                    if (size.outWidth > 0 && size.outHeight > 0) {
+                        if (!replaced.matches("(?is).*\\bwidth\\s*=.*")) {
+                            attributes.append(" width=\"").append(size.outWidth).append("\"");
+                        }
+                        if (!replaced.matches("(?is).*\\bheight\\s*=.*")) {
+                            attributes.append(" height=\"").append(size.outHeight).append("\"");
+                        }
+                    }
+                    int insertAt = replaced.endsWith("/>") ? replaced.length() - 2 : replaced.length() - 1;
+                    replaced = replaced.substring(0, insertAt) + attributes + replaced.substring(insertAt);
+                }
                 tagMatcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(replaced));
             }
 
